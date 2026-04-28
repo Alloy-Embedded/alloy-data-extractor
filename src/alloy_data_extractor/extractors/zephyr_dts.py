@@ -315,6 +315,7 @@ def preprocess_dtsi(
     *,
     zephyr_root: Path | None = None,
     extra_includes: tuple[Path, ...] = (),
+    vendor_hint: str | None = None,
 ) -> str:
     """Run cpp on a Zephyr `.dtsi` file and return the
     preprocessed DTS text (with `/dts-v1/;` prepended) so dtlib
@@ -342,21 +343,43 @@ def preprocess_dtsi(
     ]
     include_dirs: list[Path] = list(extra_includes)
     if zephyr_root is not None:
+        # Per-arch include dirs: chip-variant `.dtsi` files
+        # commonly include `<nordic/nrf52832.dtsi>` and similar,
+        # which resolve relative to `dts/<arch>/`.  We add every
+        # arch directory we find so the resolver picks the right
+        # base file regardless of which architecture the chip is.
+        dts_root = zephyr_root / "dts"
+        include_dirs.append(dts_root / "common")
+        include_dirs.append(dts_root / "vendor")
+        for arch_dir in sorted(dts_root.glob("*")):
+            if arch_dir.is_dir() and arch_dir.name not in {"bindings", "common", "vendor"}:
+                include_dirs.append(arch_dir)
         include_dirs.extend(
             [
-                zephyr_root / "dts" / "common",
-                zephyr_root / "dts" / "vendor",
-                zephyr_root / "dts",
+                dts_root,
                 zephyr_root / "include",
                 zephyr_root / "include" / "zephyr",
+                zephyr_root / "include" / "zephyr" / "dt-bindings",
+                dts_root / "bindings",
             ]
         )
         # Force-include `mem.h` so naked `DT_SIZE_K(...)` /
         # `DT_SIZE_M(...)` macros expand even when the .dtsi
         # under inspection forgot to `#include <mem.h>`.
-        common_mem = zephyr_root / "dts" / "common" / "mem.h"
+        common_mem = dts_root / "common" / "mem.h"
         if common_mem.exists():
             cmd.extend(["-imacros", str(common_mem)])
+        # Force-include vendor-common headers so vendor-specific
+        # macros (e.g. ``NRF_DEFAULT_IRQ_PRIORITY``) expand even
+        # when the chip-variant .dtsi forgot the parent include.
+        if vendor_hint:
+            for candidate in (
+                dts_root / "vendor" / vendor_hint / f"{vendor_hint}_common.dtsi",
+                dts_root / "vendor" / vendor_hint / "nrf_common.dtsi",
+            ):
+                if candidate.exists():
+                    cmd.extend(["-imacros", str(candidate)])
+                    break
     for inc in include_dirs:
         cmd.append(f"-I{inc}")
 
@@ -371,12 +394,112 @@ def preprocess_dtsi(
     return body
 
 
+def _stub_undefined_labels(body: str) -> str:
+    """Make a fragment-style Zephyr `.dtsi` parseable by
+    dtlib by wrapping/stubbing as needed.
+
+    Chip-variant `.dtsi` files in Zephyr are partial: they
+    contain overlay blocks (``&label { ... };``) and/or
+    bare top-level node declarations (``ipc0: ipc0 { ... };``)
+    that only make sense when concatenated with their parent
+    SoC tree.  This function:
+
+    * Injects empty ``<label>: stub@addr { reg = ... };``
+      stubs for any ``&<label>`` reference whose definition
+      is missing — silences ``DTError: undefined node label``.
+    * Wraps any bare top-level node declarations in a
+      synthetic ``/ { ... };`` root so the parser sees a
+      well-formed tree.  Overlay ``&label { }`` blocks are
+      LEFT outside the root (they're valid at top level).
+    """
+    import re
+
+    # Strip /dts-v1/; for processing, re-add at the end.
+    has_dts_v1 = "/dts-v1/;" in body
+    if has_dts_v1:
+        body = body.replace("/dts-v1/;", "", 1)
+
+    # Find every `&<label>` reference + every `<label>:` definition.
+    referenced = set(re.findall(r"&([A-Za-z_][A-Za-z0-9_]*)", body))
+    defined = set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*:", body))
+    missing = sorted(referenced - defined)
+
+    # Build stub root: holds all undefined-label stubs plus,
+    # when there's no `/ { }` already, gathers any orphan
+    # top-level node declarations like `ipc0: ipc0 { ... };`.
+    has_root_section = bool(re.search(r"^\s*/\s*\{", body, flags=re.MULTILINE))
+
+    stub_lines = ["/ {"]
+    for label in missing:
+        stub_lines.append(
+            f"    {label}: stub_{label}@deadbeef {{ reg = <0xdeadbeef 0>; }};"
+        )
+
+    if not has_root_section:
+        # Pull out top-level `name: name@addr { ... };` blocks
+        # (orphan declarations at file scope) and move them
+        # into the stub root.  Leaves overlay `&label { ... };`
+        # blocks alone — they're valid at top level.
+        orphan_blocks: list[str] = []
+
+        def _extract_orphans(text: str) -> tuple[str, list[str]]:
+            out: list[str] = []
+            new_text_parts: list[str] = []
+            pos = 0
+            while pos < len(text):
+                # Search for a top-level `LABEL [LABEL2: ...] NAME ... {` declaration.
+                # DTS allows multiple labels before a node name:
+                #   `dppic0: dppic: dppic@17000 { ... };`
+                m = re.search(
+                    r"^([A-Za-z_][A-Za-z0-9_]*\s*:\s*)+[A-Za-z_][A-Za-z0-9_@,-]*\s*\{",
+                    text[pos:],
+                    re.MULTILINE,
+                )
+                if m is None:
+                    new_text_parts.append(text[pos:])
+                    break
+                start = pos + m.start()
+                new_text_parts.append(text[pos:start])
+                # Walk braces to find the matching `};`.
+                brace_pos = pos + m.end() - 1
+                depth = 1
+                i = brace_pos + 1
+                while i < len(text) and depth > 0:
+                    if text[i] == "{":
+                        depth += 1
+                    elif text[i] == "}":
+                        depth -= 1
+                    i += 1
+                # Skip the trailing `;` if present.
+                while i < len(text) and text[i] in (";", "\n", " ", "\t"):
+                    if text[i] == ";":
+                        i += 1
+                        break
+                    i += 1
+                out.append(text[start:i])
+                pos = i
+            return "".join(new_text_parts), out
+
+        body, orphan_blocks = _extract_orphans(body)
+        for block in orphan_blocks:
+            # Indent the orphan block 4 spaces for readability.
+            indented = "\n".join("    " + line for line in block.splitlines())
+            stub_lines.append(indented)
+
+    stub_lines.append("};")
+    stub = "\n".join(stub_lines) + "\n"
+
+    head = "/dts-v1/;\n" if has_dts_v1 else ""
+    return head + stub + body
+
+
 def parse_zephyr_device_document(
     dts_path: Path,
     *,
     compatible_map: dict[str, str],
     extra_compatible_filter: Callable[[str], bool] | None = None,
     zephyr_root: Path | None = None,
+    vendor_hint: str | None = None,
 ) -> ZephyrDeviceDocument:
     """Parse one DTS file into a structural document.
 
@@ -397,7 +520,10 @@ def parse_zephyr_device_document(
         or (zephyr_root is not None and "#include" in dts_path.read_text(encoding="utf-8"))
     )
     if needs_preprocess and zephyr_root is not None:
-        body = preprocess_dtsi(dts_path, zephyr_root=zephyr_root)
+        body = preprocess_dtsi(
+            dts_path, zephyr_root=zephyr_root, vendor_hint=vendor_hint
+        )
+        body = _stub_undefined_labels(body)
         # dtlib.DT only takes a path; write the preprocessed body
         # to a temp file alongside the original.
         import tempfile
@@ -408,11 +534,18 @@ def parse_zephyr_device_document(
             tmp.write(body)
             tmp_path = Path(tmp.name)
         try:
-            dt = dtlib.DT(str(tmp_path))
+            # ``force=True``: chip-variant `.dtsi` files are
+            # fragments meant to be merged with a parent SoC
+            # tree; on their own they may reference labels
+            # defined elsewhere (e.g. ``&sram0_shared``,
+            # ``&eefc``).  ``force`` lets dtlib swallow those
+            # reference errors so we still extract the
+            # peripherals the fragment DOES define.
+            dt = dtlib.DT(str(tmp_path), force=True)
         finally:
             tmp_path.unlink(missing_ok=True)
     else:
-        dt = dtlib.DT(str(dts_path))
+        dt = dtlib.DT(str(dts_path), force=True)
     peripherals: list[ZephyrDtsPeripheral] = []
     interrupts: list[ZephyrDtsInterrupt] = []
     memories: list[ZephyrDtsMemoryRegion] = []
@@ -424,6 +557,20 @@ def parse_zephyr_device_document(
         "zephyr,memory-region",
         "fixed-partitions",
     }
+
+    # ``dt.root`` may be ``None`` when ``.dtsi`` carries only
+    # overlay-style ``&label { ... }`` blocks (no ``/ { ... }``
+    # root section).  In that case we have nothing to extract;
+    # return an empty document so the caller surfaces a
+    # zero-peripheral payload rather than crashing.
+    if dt.root is None:
+        return ZephyrDeviceDocument(
+            device_name=dts_path.stem.lower(),
+            peripherals=(),
+            interrupts=(),
+            memories=(),
+            skipped_compatibles=(),
+        )
 
     for node in dt.root.node_iter():
         compatibles = _read_compat(node)
@@ -571,7 +718,10 @@ def extract_device(
         raise FileNotFoundError(f"DTS file not found: {svd_path}")
     compatible_map = compatible_map_for_vendor(vendor)
     document = parse_zephyr_device_document(
-        svd_path, compatible_map=compatible_map, zephyr_root=zephyr_root
+        svd_path,
+        compatible_map=compatible_map,
+        zephyr_root=zephyr_root,
+        vendor_hint=vendor,
     )
 
     payload: dict[str, Any] = {
