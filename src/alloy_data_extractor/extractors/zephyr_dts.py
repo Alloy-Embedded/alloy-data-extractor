@@ -310,11 +310,73 @@ def _peripheral_canonical_name(label: str | None, fallback_name: str) -> str:
     return (label or fallback_name).upper()
 
 
+def preprocess_dtsi(
+    dtsi_path: Path,
+    *,
+    zephyr_root: Path | None = None,
+    extra_includes: tuple[Path, ...] = (),
+) -> str:
+    """Run cpp on a Zephyr `.dtsi` file and return the
+    preprocessed DTS text (with `/dts-v1/;` prepended) so dtlib
+    can parse it.
+
+    Zephyr `.dtsi` files use ``#include`` directives that need
+    C-preprocessor expansion before dtlib accepts them.  When
+    ``zephyr_root`` is provided we add the canonical include
+    paths (``dts/`` + ``include/``).
+    """
+    import subprocess
+
+    # Use clang -E in assembler-with-cpp mode: this preserves
+    # DTS-specific tokens like ``#address-cells = <1>;`` (which
+    # plain C-mode preprocessing misreads as a preprocessor
+    # directive) while still expanding ``#include`` directives.
+    # ``-P`` suppresses ``# <line> <file>`` markers.
+    cmd: list[str] = [
+        "clang",
+        "-E",
+        "-P",
+        "-x",
+        "assembler-with-cpp",
+        str(dtsi_path),
+    ]
+    include_dirs: list[Path] = list(extra_includes)
+    if zephyr_root is not None:
+        include_dirs.extend(
+            [
+                zephyr_root / "dts" / "common",
+                zephyr_root / "dts" / "vendor",
+                zephyr_root / "dts",
+                zephyr_root / "include",
+                zephyr_root / "include" / "zephyr",
+            ]
+        )
+        # Force-include `mem.h` so naked `DT_SIZE_K(...)` /
+        # `DT_SIZE_M(...)` macros expand even when the .dtsi
+        # under inspection forgot to `#include <mem.h>`.
+        common_mem = zephyr_root / "dts" / "common" / "mem.h"
+        if common_mem.exists():
+            cmd.extend(["-imacros", str(common_mem)])
+    for inc in include_dirs:
+        cmd.append(f"-I{inc}")
+
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=60)
+    if result.returncode != 0:
+        raise ValueError(
+            f"clang -E preprocessing failed for {dtsi_path}: {result.stderr.strip()[:300]}"
+        )
+    body = result.stdout
+    if "/dts-v1/;" not in body:
+        body = "/dts-v1/;\n" + body
+    return body
+
+
 def parse_zephyr_device_document(
     dts_path: Path,
     *,
     compatible_map: dict[str, str],
     extra_compatible_filter: Callable[[str], bool] | None = None,
+    zephyr_root: Path | None = None,
 ) -> ZephyrDeviceDocument:
     """Parse one DTS file into a structural document.
 
@@ -325,7 +387,32 @@ def parse_zephyr_device_document(
     """
     if not dts_path.exists():
         raise FileNotFoundError(f"DTS file not found: {dts_path}")
-    dt = dtlib.DT(str(dts_path))
+
+    # Decide whether to preprocess: a `.dtsi` (or any DTS that
+    # uses `#include`) needs cpp expansion before dtlib will
+    # accept it.  When `zephyr_root` is provided, run cpp via
+    # `preprocess_dtsi`; otherwise fall back to direct dtlib.DT.
+    needs_preprocess = (
+        dts_path.suffix == ".dtsi"
+        or (zephyr_root is not None and "#include" in dts_path.read_text(encoding="utf-8"))
+    )
+    if needs_preprocess and zephyr_root is not None:
+        body = preprocess_dtsi(dts_path, zephyr_root=zephyr_root)
+        # dtlib.DT only takes a path; write the preprocessed body
+        # to a temp file alongside the original.
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".dts", delete=False, encoding="utf-8"
+        ) as tmp:
+            tmp.write(body)
+            tmp_path = Path(tmp.name)
+        try:
+            dt = dtlib.DT(str(tmp_path))
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    else:
+        dt = dtlib.DT(str(dts_path))
     peripherals: list[ZephyrDtsPeripheral] = []
     interrupts: list[ZephyrDtsInterrupt] = []
     memories: list[ZephyrDtsMemoryRegion] = []
@@ -426,6 +513,41 @@ def _content_revision(dts_path: Path) -> str:
     return f"content-sha256:{digest.hexdigest()[:16]}"
 
 
+# Per-(vendor, family) core hint for Zephyr-sourced chips.  DTS
+# does carry CPU info via `compatible = "arm,cortex-mX"` but the
+# extractor doesn't surface it yet — this table is a fallback so
+# the canonical YAML always has identity.core populated.
+_ZEPHYR_FAMILY_TO_CORE: dict[tuple[str, str], str] = {
+    ("nordic", "nrf51"): "cortex-m0",
+    ("nordic", "nrf52"): "cortex-m4f",
+    ("nordic", "nrf53"): "cortex-m33",
+    ("nordic", "nrf54l"): "cortex-m33",
+    ("nordic", "nrf91"): "cortex-m33",
+    ("renesas", "ra"): "cortex-m4f",
+    ("renesas", "ra2"): "cortex-m23",
+    ("renesas", "ra4"): "cortex-m33",
+    ("renesas", "ra6"): "cortex-m33",
+    ("ti", "cc13xx"): "cortex-m4f",
+    ("ti", "cc26xx"): "cortex-m4f",
+    ("ti", "cc32xx"): "cortex-m4f",
+    ("atmel", "sam"): "cortex-m4f",
+    ("atmel", "samd"): "cortex-m0plus",
+    ("atmel", "saml"): "cortex-m0plus",
+    ("atmel", "same"): "cortex-m7f",
+    ("atmel", "samv"): "cortex-m7f",
+    ("ambiq", "apollo"): "cortex-m4f",
+    ("ambiq", "apollo3"): "cortex-m4f",
+    ("ambiq", "apollo4"): "cortex-m4f",
+    ("infineon", "xmc"): "cortex-m4f",
+    ("infineon", "psoc6"): "cortex-m4f",
+    ("infineon", "cat1"): "cortex-m4f",
+    ("silabs", "gecko"): "cortex-m4f",
+    ("silabs", "efr32"): "cortex-m33",
+    ("silabs", "efm32"): "cortex-m4f",
+    ("espressif", "esp32-xtensa"): "xtensa-lx6",
+}
+
+
 def extract_device(
     *,
     vendor: str,
@@ -434,17 +556,23 @@ def extract_device(
     svd_path: Path,
     revision: str | None = None,
     schema_version: str = "1.2.0",
+    zephyr_root: Path | None = None,
 ) -> ZephyrDtsExtraction:
     """Extract one device from a Zephyr DTS file.
 
     Signature mirrors ``cmsis_svd.extract_device`` so the
     pipeline registry can dispatch uniformly.  ``svd_path`` is
     the DTS file path (kept as-is for argument-name parity).
+    ``zephyr_root`` is needed when ``svd_path`` is a `.dtsi`
+    that uses ``#include`` directives — cpp preprocessing
+    walks the Zephyr include tree.
     """
     if not svd_path.exists():
         raise FileNotFoundError(f"DTS file not found: {svd_path}")
     compatible_map = compatible_map_for_vendor(vendor)
-    document = parse_zephyr_device_document(svd_path, compatible_map=compatible_map)
+    document = parse_zephyr_device_document(
+        svd_path, compatible_map=compatible_map, zephyr_root=zephyr_root
+    )
 
     payload: dict[str, Any] = {
         "schema_version": schema_version,
@@ -453,7 +581,7 @@ def extract_device(
             "family": family,
             "device": device,
             "package": "",
-            "core": "",  # filled by reviewer / patch overlay
+            "core": _ZEPHYR_FAMILY_TO_CORE.get((vendor, family), ""),
             "summary": f"Admitted via Zephyr DTS ({svd_path.name}).",
         },
         "provenance": {
@@ -507,12 +635,47 @@ from alloy_data_extractor.extractor_protocol import (  # noqa: E402
     register_extractor,
 )
 
+# Family bindings for the Zephyr-DTS extractor.  Every vendor in
+# COMPATIBLE_MAPS gets at least one family registered so the
+# resolver / bulk pipeline can route DTS-sourced chips through
+# this extractor.  Family naming follows Zephyr's tree
+# structure (`dts/<arch>/<vendor>/<device>.dtsi`) — the vendor
+# here is the alloy-vendor key, families are loose buckets that
+# bulk discovery uses for routing.
+_ZEPHYR_DTS_FAMILIES: tuple[tuple[str, str], ...] = (
+    ("nordic", "nrf52"),
+    ("nordic", "nrf51"),
+    ("nordic", "nrf53"),
+    ("nordic", "nrf54l"),
+    ("nordic", "nrf91"),
+    ("renesas", "ra"),
+    ("renesas", "ra2"),
+    ("renesas", "ra4"),
+    ("renesas", "ra6"),
+    ("ti", "cc13xx"),
+    ("ti", "cc26xx"),
+    ("ti", "cc32xx"),
+    ("atmel", "sam"),
+    ("atmel", "samd"),
+    ("atmel", "saml"),
+    ("atmel", "same"),
+    ("atmel", "samv"),
+    ("ambiq", "apollo"),
+    ("ambiq", "apollo3"),
+    ("ambiq", "apollo4"),
+    ("infineon", "xmc"),
+    ("infineon", "psoc6"),
+    ("infineon", "cat1"),
+    ("silabs", "gecko"),
+    ("silabs", "efr32"),
+    ("silabs", "efm32"),
+    ("espressif", "esp32-xtensa"),
+)
+
 
 @register_extractor(
     "zephyr-dts",
-    families=(
-        ("nordic", "nrf52"),
-    ),
+    families=_ZEPHYR_DTS_FAMILIES,
 )
 class ZephyrDtsExtractor:
     """The :class:`Extractor` adapter for the Zephyr-DTS parser.
@@ -531,12 +694,14 @@ class ZephyrDtsExtractor:
 
     def extract(self, request: ExtractionRequest) -> ExtractionResult:
         dts_path = request.require_source("zephyr-dts")
+        zephyr_root = request.source_paths.get("zephyr-root")
         legacy = extract_device(
             vendor=request.vendor,
             family=request.family,
             device=request.device,
             svd_path=dts_path,
             revision=request.revision,
+            zephyr_root=zephyr_root,
         )
         return ExtractionResult(
             payload=legacy.payload,
