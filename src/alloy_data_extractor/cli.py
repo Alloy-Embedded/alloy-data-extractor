@@ -1,7 +1,14 @@
 """``alloy-data-extract`` CLI.
 
-Walks one ``(vendor, family)`` scope, runs the configured
-extractor, and writes canonical YAML into the data repo.
+Subcommands:
+
+* ``extract``  — run an extractor against one or more devices.
+* ``index``    — rebuild ``index.yml`` by walking the YAML tree.
+* ``dashboard``— rebuild ``coverage-dashboard.md`` from index.
+
+The legacy "no subcommand, just flags" form keeps working as
+``extract`` for back-compat — Phase 0/1 callers don't have to
+update their invocations.
 """
 
 from __future__ import annotations
@@ -10,6 +17,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from alloy_data_extractor.dashboard import write_dashboard
+from alloy_data_extractor.index import is_index_stale, write_index
 from alloy_data_extractor.pipeline import (
     default_output_root,
     registered_extractors,
@@ -18,7 +27,6 @@ from alloy_data_extractor.pipeline import (
 
 
 def _parse_source_arg(values: list[str]) -> dict[str, str]:
-    """Parse repeated ``--source key=value`` flags into a dict."""
     result: dict[str, str] = {}
     for entry in values:
         if "=" not in entry:
@@ -28,14 +36,7 @@ def _parse_source_arg(values: list[str]) -> dict[str, str]:
     return result
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="alloy-data-extract",
-        description=(
-            "Extract canonical device YAML from authoritative vendor "
-            "sources and write it into alloy-devices-yml."
-        ),
-    )
+def _add_extract_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--vendor", required=True)
     parser.add_argument("--family", required=True)
     parser.add_argument(
@@ -46,46 +47,35 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--extractor",
-        default="cmsis-svd",
-        choices=registered_extractors(),
+        default=None,
+        choices=[None, *registered_extractors()],
+        help="Force a specific extractor; default auto-resolves from (vendor, family).",
     )
     parser.add_argument(
         "--source",
         action="append",
         default=[],
-        help="device=path mapping for the extractor's source file (repeatable).",
+        help="key=path source mapping (repeatable).  Keys may be device "
+        "names (legacy) or source-ids (preferred, e.g. 'cmsis-svd').",
     )
-    parser.add_argument(
-        "--output-root",
-        type=Path,
-        default=None,
-        help="alloy-devices-yml checkout root (defaults to sibling).",
-    )
-    parser.add_argument(
-        "--schema",
-        type=Path,
-        default=None,
-        help="Path to canonical_device/device.schema.json (validation off if absent).",
-    )
-    parser.add_argument(
-        "--revision",
-        default="unknown",
-        help="Upstream revision identifier (recorded in provenance).",
-    )
-    args = parser.parse_args(argv)
+    parser.add_argument("--output-root", type=Path, default=None)
+    parser.add_argument("--schema", type=Path, default=None)
+    parser.add_argument("--revision", default="unknown")
 
-    sources = _parse_source_arg(args.source)
-    if missing := [d for d in args.device if d not in sources]:
-        parser.error(
-            f"--source missing for devices: {missing}.  Pass --source <device>=<path> per device."
-        )
 
+def _resolve_output_root(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Path:
     output_root = args.output_root or default_output_root()
     if not output_root.exists():
         parser.error(
-            f"--output-root does not exist: {output_root}.  Clone "
-            "alloy-devices-yml first or pass --output-root."
+            f"--output-root does not exist: {output_root}.  "
+            "Clone alloy-devices-yml first or pass --output-root."
         )
+    return output_root
+
+
+def _cmd_extract(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    sources = _parse_source_arg(args.source)
+    output_root = _resolve_output_root(args, parser)
 
     schema_path = args.schema
     if schema_path is None:
@@ -93,12 +83,20 @@ def main(argv: list[str] | None = None) -> int:
         if candidate.exists():
             schema_path = candidate
 
+    # Decide source-paths shape: device-keyed (legacy) or source-id-keyed (preferred).
+    source_paths: dict[str, Path] = {}
+    looks_device_keyed = all(key in args.device for key in sources)
+    if looks_device_keyed and sources:
+        source_paths = {d: Path(sources[d]) for d in args.device if d in sources}
+    else:
+        source_paths = {key: Path(value) for key, value in sources.items()}
+
     results = run_extraction(
         vendor=args.vendor,
         family=args.family,
         devices=args.device,
         extractor_id=args.extractor,
-        source_paths={d: Path(sources[d]) for d in args.device},
+        source_paths=source_paths,
         output_root=output_root,
         revision=args.revision,
         schema_path=schema_path,
@@ -111,6 +109,68 @@ def main(argv: list[str] | None = None) -> int:
             f"-> {r.yaml_path.relative_to(output_root)}\n"
         )
     return 0
+
+
+def _cmd_index(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    output_root = _resolve_output_root(args, parser)
+    if args.check:
+        stale, message = is_index_stale(data_repo_root=output_root)
+        sys.stdout.write(message + "\n")
+        return 1 if stale else 0
+    out_path = write_index(data_repo_root=output_root)
+    sys.stdout.write(f"Wrote {out_path}\n")
+    return 0
+
+
+def _cmd_dashboard(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    output_root = _resolve_output_root(args, parser)
+    out_path = write_dashboard(data_repo_root=output_root)
+    sys.stdout.write(f"Wrote {out_path}\n")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="alloy-data-extract",
+        description=(
+            "Extract canonical device YAML and maintain the "
+            "alloy-devices-yml catalog."
+        ),
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    extract_parser = sub.add_parser("extract", help="Run an extractor (default).")
+    _add_extract_args(extract_parser)
+
+    index_parser = sub.add_parser(
+        "index", help="Rebuild alloy-devices-yml/index.yml from the YAML tree."
+    )
+    index_parser.add_argument("--output-root", type=Path, default=None)
+    index_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit non-zero if index.yml is stale (CI gate).",
+    )
+
+    dashboard_parser = sub.add_parser(
+        "dashboard", help="Rebuild alloy-devices-yml/coverage-dashboard.md."
+    )
+    dashboard_parser.add_argument("--output-root", type=Path, default=None)
+
+    # Backward-compat: when invoked with no subcommand, treat as 'extract'.
+    args, remaining = parser.parse_known_args(argv)
+    if args.command is None:
+        # Re-parse with explicit 'extract' subcommand.
+        return main(["extract", *(argv or sys.argv[1:])])
+
+    if args.command == "extract":
+        return _cmd_extract(args, extract_parser)
+    if args.command == "index":
+        return _cmd_index(args, index_parser)
+    if args.command == "dashboard":
+        return _cmd_dashboard(args, dashboard_parser)
+    parser.error(f"unknown subcommand {args.command!r}")
+    return 2  # unreachable
 
 
 if __name__ == "__main__":  # pragma: no cover
