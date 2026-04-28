@@ -76,7 +76,13 @@ STM32_MERGE_POLICY = MergePolicy(
     name="STM32",
     primary_source_id="stm32",
     field_priorities={
-        "pins": ("stm32-cubemx", "modm-devices", "stm32"),
+        # Pinmux / package pads: STM32 open-pin-data is the
+        # authoritative source — it carries the package-specific
+        # AF tables ST officially publishes.  CubeMX and modm
+        # mostly mirror this; they fall back when open-pin-data
+        # doesn't ship the chip yet.
+        "pins": ("stm32-open-pin-data", "stm32-cubemx", "modm-devices", "stm32"),
+        "package_pads": ("stm32-open-pin-data", "stm32-cubemx", "stm32"),
         "clock_nodes": ("modm-devices", "stm32-cubemx", "stm32"),
         "clock_selectors": ("modm-devices", "stm32-cubemx", "stm32"),
         "dma_requests": ("stm32-cubemx", "modm-devices", "stm32"),

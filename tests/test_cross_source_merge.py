@@ -169,7 +169,7 @@ def test_merge_skips_empty_fields_in_priority_chain() -> None:
         ("clock_nodes", "modm-devices"),
         ("clock_selectors", "modm-devices"),
         ("dma_bindings", "modm-devices"),
-        ("pins", "stm32-cubemx"),
+        ("pins", "stm32-open-pin-data"),
         ("dma_requests", "stm32-cubemx"),
     ],
 )

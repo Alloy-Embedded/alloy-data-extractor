@@ -36,6 +36,9 @@ from alloy_data_extractor.extractors import nxp_mcux as _nxp_mcux  # noqa: F401
 from alloy_data_extractor.extractors import rp2040 as _rp2040  # noqa: F401
 from alloy_data_extractor.extractors import stm32 as _stm32  # noqa: F401
 from alloy_data_extractor.extractors import stm32_cubemx as _stm32_cubemx  # noqa: F401
+from alloy_data_extractor.extractors import (
+    stm32_open_pin_data as _stm32_open_pin_data,  # noqa: F401
+)
 from alloy_data_extractor.extractors import zephyr_dts as _zephyr_dts  # noqa: F401
 
 
