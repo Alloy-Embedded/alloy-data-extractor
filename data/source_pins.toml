@@ -1,0 +1,50 @@
+# Pinned upstream revisions for each extractor.
+#
+# Bumping a pin is a reviewable PR.  CI re-runs every extractor
+# against the new pin and opens a PR against alloy-devices-yml
+# when YAML output drifts.
+#
+# Identity convention: ``[<vendor-or-source-id>]`` table per
+# upstream, with at minimum a ``revision`` field (git SHA, pack
+# version, etc.) and an ``origin_url`` for traceability.
+
+[cmsis-svd-data]
+origin_url = "https://github.com/cmsis-svd/cmsis-svd-data"
+revision = "main"  # bump to specific SHA when first wave lands
+license = "Per-vendor (mostly BSD-3 or permissive)"
+
+[stm32-open-pin-data]
+origin_url = "https://github.com/STMicroelectronics/STM32_open_pin_data"
+revision = "main"
+license = "BSD-3-Clause"
+
+[microchip-mplab-x-dfp]
+origin_url = "https://packs.download.microchip.com"
+revision = "TBD"  # per-pack version pinned when ATDF extractor migrates
+license = "Microchip permissive (redistribution allowed)"
+notes = "AVR + SAM + PIC8/16/18/24/32 + dsPIC33 — covers ~2000 chips no other OSS HAL framework reaches."
+
+[zephyr]
+origin_url = "https://github.com/zephyrproject-rtos/zephyr"
+revision = "main"
+license = "Apache-2.0"
+
+[espressif-esp-idf]
+origin_url = "https://github.com/espressif/esp-idf"
+revision = "v5.3"
+license = "Apache-2.0"
+
+[nxp-mcuxpresso-sdk]
+origin_url = "https://github.com/nxp-mcuxpresso/mcux-sdk"
+revision = "main"
+license = "BSD-3-Clause"
+
+[modm-devices]
+origin_url = "https://github.com/modm-io/modm-devices"
+revision = "develop"
+license = "BSD-3-Clause / MPL-2.0"
+
+[raspberrypi-pico-sdk]
+origin_url = "https://github.com/raspberrypi/pico-sdk"
+revision = "master"
+license = "BSD-3-Clause"

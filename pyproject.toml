@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alloy-data-extractor"
+version = "0.1.0"
+description = "Multi-vendor ETL pipeline that produces alloy-devices-yml canonical YAMLs from authoritative vendor sources (CMSIS-SVD, ATDF, MCUXpresso, Zephyr DTS, …)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+  { name = "Alloy Embedded" },
+]
+dependencies = [
+    # Canonical YAML serialization — pinned to alloy-codegen's
+    # contract so the extractor's output round-trips through the
+    # same schema validator the codegen consumer uses.
+    "PyYAML>=6.0",
+    "jsonschema>=4.0",
+    # CMSIS-Pack manager (chip catalog + SVD discovery)
+    "cmsis-pack-manager>=0.5.0",
+    # Zephyr DTS parsing
+    "devicetree>=0.0.2",
+    # ATDF / MCUXpresso XML
+    "lxml>=5.0",
+]
+
+[project.scripts]
+alloy-data-extract = "alloy_data_extractor.cli:main"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/alloy_data_extractor"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.10",
+]

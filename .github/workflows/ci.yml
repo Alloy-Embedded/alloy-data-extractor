@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Unit tests + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e . pytest ruff PyYAML jsonschema lxml devicetree
+
+      - name: Ruff
+        run: python -m ruff check src tests
+
+      - name: Pytest
+        run: python -m pytest -q
+
+      - name: Ruff format
+        run: python -m ruff format --check src tests
