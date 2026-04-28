@@ -26,7 +26,10 @@ from jsonschema import Draft202012Validator
 # The schema version this extractor writes.  Bumped via the
 # documented semver rule (PATCH = additive optional, MINOR =
 # additive required + backfill, MAJOR = incompatible).
-SCHEMA_VERSION_CURRENT = "1.2.0"
+#
+# 1.3.0 added (additive, optional) ``provenance.field_provenance``
+# under `add-cross-source-merge` (Phase 2.2).
+SCHEMA_VERSION_CURRENT = "1.3.0"
 
 _SEMVER_RE = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
 
