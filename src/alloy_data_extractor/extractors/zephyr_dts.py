@@ -37,7 +37,6 @@ from typing import Any
 
 from devicetree import dtlib
 
-
 # ---------------------------------------------------------------------------
 # Compatible-string maps (one per vendor) + generic ARM-core map
 # ---------------------------------------------------------------------------
@@ -496,6 +495,60 @@ def extract_device(
     )
 
 
+# ---------------------------------------------------------------------------
+# Extractor protocol adapter (added by define-extractor-protocol)
+# ---------------------------------------------------------------------------
+
+
+from alloy_data_extractor.extractor_protocol import (  # noqa: E402
+    ExtractionRequest,
+    ExtractionResult,
+    ProvenanceRecord,
+    register_extractor,
+)
+
+
+@register_extractor(
+    "zephyr-dts",
+    families=(
+        ("nordic", "nrf52"),
+    ),
+)
+class ZephyrDtsExtractor:
+    """The :class:`Extractor` adapter for the Zephyr-DTS parser.
+
+    Bound family-by-family because not every vendor whose
+    compatible-strings are mapped here has been admitted yet —
+    admission requires a registered codegen-side IR build path
+    too, which is its own decision.
+    """
+
+    extractor_id: str = "zephyr-dts"
+
+    def supports(self, vendor: str, family: str) -> bool:  # noqa: D401
+        del vendor, family
+        return False
+
+    def extract(self, request: ExtractionRequest) -> ExtractionResult:
+        dts_path = request.require_source("zephyr-dts")
+        legacy = extract_device(
+            vendor=request.vendor,
+            family=request.family,
+            device=request.device,
+            svd_path=dts_path,
+            revision=request.revision,
+        )
+        return ExtractionResult(
+            payload=legacy.payload,
+            provenance=ProvenanceRecord(
+                source_id="zephyr-dts",
+                source_path=str(dts_path),
+                revision=request.revision,
+            ),
+            warnings=(),
+        )
+
+
 __all__ = [
     "AMBIQ_COMPATIBLE_MAP",
     "ATMEL_COMPATIBLE_MAP",
@@ -508,6 +561,7 @@ __all__ = [
     "TI_COMPATIBLE_MAP",
     "ZephyrDeviceDocument",
     "ZephyrDtsExtraction",
+    "ZephyrDtsExtractor",
     "ZephyrDtsInterrupt",
     "ZephyrDtsMemoryRegion",
     "ZephyrDtsPeripheral",

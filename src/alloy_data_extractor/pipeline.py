@@ -1,12 +1,10 @@
 """High-level extraction pipeline orchestrator.
 
-Dispatches per ``(vendor, family)`` to the appropriate extractor,
-runs it against the configured source, and writes the resulting
-canonical YAML into ``alloy-devices-yml``.
-
-For v1 the only registered extractor is ``cmsis_svd``.  Other
-extractors (ATDF, MCUXpresso, Zephyr DTS, ESP-IDF, modm-data,
-Pico SDK) migrate from alloy-codegen in incremental changes.
+Dispatches per ``(vendor, family)`` through the protocol-level
+registry from :mod:`alloy_data_extractor.extractor_protocol`.
+No per-vendor ``if`` cascade — adding a new extractor is one
+``@register_extractor(...)`` decorator on a class implementing
+the :class:`Extractor` Protocol.
 """
 
 from __future__ import annotations
@@ -17,12 +15,27 @@ from pathlib import Path
 from typing import Any
 
 from alloy_data_extractor.emit.canonical_yaml import write_device_yaml
-from alloy_data_extractor.extractors import cmsis_svd, zephyr_dts
+
+# Side-effect import: registers cmsis-svd + zephyr-dts in the
+# protocol's _REGISTRY at module-import time.
+from alloy_data_extractor.extractor_protocol import (
+    ExtractionRequest,
+    registered_extractor_ids,
+    resolve_extractor,
+    resolve_extractor_by_id,
+)
+from alloy_data_extractor.extractors import cmsis_svd as _cmsis_svd  # noqa: F401
+from alloy_data_extractor.extractors import zephyr_dts as _zephyr_dts  # noqa: F401
 
 
 @dataclass(frozen=True, slots=True)
 class ExtractionResult:
-    """Per-device outcome of one ETL run."""
+    """Per-device outcome of one ETL run.
+
+    Pipeline-level result (file written + bytes), distinct
+    from :class:`extractor_protocol.ExtractionResult`
+    (in-memory payload + provenance).
+    """
 
     vendor: str
     family: str
@@ -32,47 +45,50 @@ class ExtractionResult:
     provenance: dict[str, str]
 
 
-# Registry: ``(vendor, family) -> extractor function``.  More
-# entries land as additional extractors migrate over.
-_EXTRACTORS = {
-    "cmsis-svd": cmsis_svd,
-    "zephyr-dts": zephyr_dts,
-}
-
-
 def run_extraction(
     *,
     vendor: str,
     family: str,
     devices: Iterable[str],
-    extractor_id: str,
     source_paths: dict[str, Path],
     output_root: Path,
     revision: str,
+    extractor_id: str | None = None,
     schema_path: Path | None = None,
 ) -> tuple[ExtractionResult, ...]:
-    """Run one extractor for a list of devices.
+    """Run extraction for a list of devices.
 
-    ``extractor_id`` selects the extractor module by ID
-    (e.g. ``"cmsis-svd"``).  ``source_paths`` maps each
-    device-name → source file path (one SVD per device for the
-    cmsis-svd extractor).
+    When ``extractor_id`` is None, auto-resolves from
+    ``(vendor, family)`` via the registry.  Pass an explicit id
+    when more than one extractor admits the pair.
+
+    ``source_paths`` accepts two shapes for backward-compat:
+
+    * ``{device_name: path}`` — legacy.  The path flows in
+      under the resolved extractor's id.
+    * ``{source_id: path}`` — preferred.  Direct mapping into
+      :class:`ExtractionRequest.source_paths`.
     """
-    if extractor_id not in _EXTRACTORS:
-        raise ValueError(f"unknown extractor_id {extractor_id!r}; known: {sorted(_EXTRACTORS)}")
-    extractor = _EXTRACTORS[extractor_id]
+    if extractor_id is None:
+        extractor = resolve_extractor(vendor, family)
+    else:
+        extractor = resolve_extractor_by_id(extractor_id)
+
     results: list[ExtractionResult] = []
     for device in devices:
-        source_path = source_paths.get(device)
-        if source_path is None:
-            raise ValueError(f"no source path provided for device {device!r}")
-        extraction = extractor.extract_device(
+        per_device_source = source_paths.get(device)
+        if per_device_source is None:
+            request_source_paths: dict[str, Path] = dict(source_paths)
+        else:
+            request_source_paths = {extractor.extractor_id: per_device_source}
+        request = ExtractionRequest(
             vendor=vendor,
             family=family,
             device=device,
-            svd_path=source_path,
+            source_paths=request_source_paths,
             revision=revision,
         )
+        extraction = extractor.extract(request)
         out_path = write_device_yaml(
             payload=extraction.payload,
             output_root=output_root,
@@ -88,28 +104,26 @@ def run_extraction(
                 device=device,
                 yaml_path=out_path,
                 bytes_written=out_path.stat().st_size,
-                provenance=extraction.provenance,
+                provenance={
+                    "source_id": extraction.provenance.source_id,
+                    "revision": extraction.provenance.revision,
+                    "source_path": str(extraction.provenance.source_path or ""),
+                },
             )
         )
     return tuple(results)
 
 
 def registered_extractors() -> tuple[str, ...]:
-    """Return the IDs of every registered extractor — for CLI
-    discovery and `--list-extractors` output."""
-    return tuple(sorted(_EXTRACTORS))
+    """Return the IDs of every registered extractor.  Backward-
+    compat shim for callers expecting the pre-protocol API.
+    """
+    return registered_extractor_ids()
 
 
-__all__ = ["ExtractionResult", "registered_extractors", "run_extraction"]
-
-
-# Resolve the output-root contract: default to a sibling
-# ``alloy-devices-yml`` checkout.  Used by the CLI when
-# ``--output-root`` is not supplied.
 def default_output_root() -> Path:
-    """Best-effort guess at the data-repo location."""
+    """Best-effort guess at the alloy-devices-yml checkout location."""
     here = Path(__file__).resolve()
-    # repo-root / alloy-devices-yml siblings
     for parent in here.parents:
         candidate = parent / "alloy-devices-yml"
         if candidate.exists():
@@ -117,6 +131,13 @@ def default_output_root() -> Path:
     return Path.cwd() / "alloy-devices-yml"
 
 
-# Helper for the CLI to expose the data type it returns.
 def _typecheck() -> dict[str, Any]:  # pragma: no cover
     return {"results": []}
+
+
+__all__ = [
+    "ExtractionResult",
+    "default_output_root",
+    "registered_extractors",
+    "run_extraction",
+]

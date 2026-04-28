@@ -173,4 +173,68 @@ def extract_device(
     )
 
 
-__all__ = ["CmsisSvdExtraction", "extract_device"]
+# ---------------------------------------------------------------------------
+# Extractor protocol adapter (added by define-extractor-protocol)
+# ---------------------------------------------------------------------------
+
+
+from alloy_data_extractor.extractor_protocol import (  # noqa: E402
+    ExtractionRequest,
+    ExtractionResult,
+    ProvenanceRecord,
+    register_extractor,
+)
+
+
+@register_extractor(
+    "cmsis-svd",
+    # CMSIS-SVD covers many vendors via a uniform XML format; we
+    # bind by vendor (catch-all) so per-family registration is
+    # not required.  Specific vendor-specific extractors (e.g.
+    # stm32) can override by registering with families= and
+    # winning the resolver via specificity.
+    vendors=(
+        "st",
+        "nordic",
+        "microchip",
+        "raspberrypi",
+        "espressif",
+        "nxp",
+        "gigadevice",
+        "bouffalo",
+        "wch",
+        "kendryte",
+        "allwinner",
+    ),
+)
+class CmsisSvdExtractor:
+    """The :class:`Extractor` adapter for the CMSIS-SVD parser."""
+
+    extractor_id: str = "cmsis-svd"
+
+    def supports(self, vendor: str, family: str) -> bool:  # noqa: D401
+        # Decorator-derived bindings handle the actual admission.
+        del vendor, family
+        return False
+
+    def extract(self, request: ExtractionRequest) -> ExtractionResult:
+        svd_path = request.require_source("cmsis-svd")
+        legacy = extract_device(
+            vendor=request.vendor,
+            family=request.family,
+            device=request.device,
+            svd_path=svd_path,
+            revision=request.revision,
+        )
+        return ExtractionResult(
+            payload=legacy.payload,
+            provenance=ProvenanceRecord(
+                source_id="cmsis-svd",
+                source_path=str(svd_path),
+                revision=request.revision,
+            ),
+            warnings=(),
+        )
+
+
+__all__ = ["CmsisSvdExtraction", "CmsisSvdExtractor", "extract_device"]
