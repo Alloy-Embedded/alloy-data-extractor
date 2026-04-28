@@ -72,10 +72,9 @@ def test_phase3_phase4_extractors_are_in_registry() -> None:
         ("microchip-pic", "Phase 3.1"),
         ("stm32-cubemx", "Phase 3.2"),
         ("msp430", "Phase 3.3"),
-        # `datasheet-pdf` is no longer a stub — it has a real
-        # pdfminer.six implementation as of Phase 4.1.  Tested
-        # separately in tests/test_datasheet_pdf_extractor.py.
-        ("intel-8051", "Phase 4.2"),
+        # `datasheet-pdf` (Phase 4.1) and `intel-8051` (Phase 4.2)
+        # are no longer stubs — they have real implementations.
+        # Tested separately in their own test modules.
     ],
 )
 def test_scaffold_extract_raises_with_phase_marker(
