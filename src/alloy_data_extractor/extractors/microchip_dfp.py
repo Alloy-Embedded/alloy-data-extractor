@@ -78,7 +78,17 @@ def _atdf_core_to_canonical(atdf_arch: str | None) -> str:
         "CORTEX-M7F": "cortex-m7f",
         "AVR8": "avr8",
         "AVR8X": "avr8",
+        "PIC12": "pic12f",
+        "PIC12F": "pic12f",
+        "PIC16": "pic16f",
+        "PIC16F": "pic16f",
         "PIC18": "pic18",
+        "PIC24": "pic24f",
+        "PIC24F": "pic24f",
+        "DSPIC33": "dspic33",
+        "PIC32MX": "pic32mx",
+        "PIC32MZ": "pic32mz",
+        "PIC32MK": "pic32mk",
     }
     return table.get(upper, upper.lower())
 

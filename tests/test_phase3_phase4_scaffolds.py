@@ -69,11 +69,12 @@ def test_phase3_phase4_extractors_are_in_registry() -> None:
 @pytest.mark.parametrize(
     ("extractor_id", "phase_marker"),
     [
-        ("microchip-pic", "Phase 3.1"),
+        # Only `stm32-cubemx` (Phase 3.2) remains a stub — it
+        # depends on the CubeMX MCU DB which is not bundled
+        # and not on this workstation.  All other Phase 3 + 4
+        # extractors have real implementations now (tested in
+        # their dedicated test_*.py modules).
         ("stm32-cubemx", "Phase 3.2"),
-        # `msp430` (Phase 3.3), `datasheet-pdf` (Phase 4.1), and
-        # `intel-8051` (Phase 4.2) are no longer stubs — they
-        # have real implementations.  Tested separately.
     ],
 )
 def test_scaffold_extract_raises_with_phase_marker(
