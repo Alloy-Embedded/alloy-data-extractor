@@ -52,6 +52,28 @@ _DEVICE_TO_SVD = {
 }
 
 
+# Per-family default core, used when the SVD's <cpu> element is
+# missing or names a CPU the cmsis-svd extractor's table doesn't
+# resolve (some ST SVDs are sparse on CPU metadata).
+_FAMILY_TO_CORE = {
+    "stm32f0": "cortex-m0",
+    "stm32f1": "cortex-m3",
+    "stm32f2": "cortex-m3",
+    "stm32f3": "cortex-m4f",
+    "stm32f4": "cortex-m4f",
+    "stm32f7": "cortex-m7f",
+    "stm32g0": "cortex-m0plus",
+    "stm32g4": "cortex-m4f",
+    "stm32h7": "cortex-m7f",
+    "stm32l0": "cortex-m0plus",
+    "stm32l1": "cortex-m3",
+    "stm32l4": "cortex-m4f",
+    "stm32l5": "cortex-m33",
+    "stm32u0": "cortex-m0plus",
+    "stm32u5": "cortex-m33",
+}
+
+
 def _resolve_svd_path(request: ExtractionRequest) -> Path | None:
     """Resolve the SVD path from the request's source paths.
 
@@ -79,10 +101,7 @@ def _resolve_svd_path(request: ExtractionRequest) -> Path | None:
 
 @register_extractor(
     "stm32",
-    families=(
-        ("st", "stm32f4"),
-        ("st", "stm32g0"),
-    ),
+    families=tuple(("st", fam) for fam in _FAMILY_TO_CORE),
 )
 class Stm32Extractor:
     """STM32 extractor — Phase 1.1 implementation."""
@@ -118,6 +137,15 @@ class Stm32Extractor:
         provenance["source_id"] = "stm32"
         provenance["source_path"] = str(svd_path)
         payload["provenance"] = provenance
+
+        # Per-family core fallback: some STM32 SVDs omit the <cpu>
+        # element or name a CPU the cmsis-svd table doesn't resolve.
+        identity = dict(payload.get("identity", {}))
+        if not identity.get("core"):
+            fallback = _FAMILY_TO_CORE.get(request.family)
+            if fallback:
+                identity["core"] = fallback
+                payload["identity"] = identity
 
         return ExtractionResult(
             payload=payload,

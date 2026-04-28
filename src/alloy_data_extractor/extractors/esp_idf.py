@@ -40,6 +40,21 @@ _FAMILY_TO_SVD = {
 }
 
 
+# Per-family core fallback — ESP32 SVDs don't carry a `<cpu>`
+# element (Espressif uses Xtensa LX6/LX7 + RISC-V variants
+# that aren't part of the CMSIS-SVD CPU vocabulary).
+_FAMILY_TO_CORE = {
+    "esp32": "xtensa-lx6",
+    "esp32s2": "xtensa-lx7",
+    "esp32s3": "xtensa-lx7",
+    "esp32c2": "riscv-rv32imc",
+    "esp32c3": "riscv-rv32imc",
+    "esp32c6": "riscv-rv32imac",
+    "esp32h2": "riscv-rv32imac",
+    "esp32p4": "riscv-rv32imafc",
+}
+
+
 def _resolve_svd_path(request: ExtractionRequest) -> Path | None:
     if "cmsis-svd" in request.source_paths:
         return request.source_paths["cmsis-svd"]
@@ -55,11 +70,7 @@ def _resolve_svd_path(request: ExtractionRequest) -> Path | None:
 
 @register_extractor(
     "esp-idf",
-    families=(
-        ("espressif", "esp32"),
-        ("espressif", "esp32c3"),
-        ("espressif", "esp32s3"),
-    ),
+    families=tuple(("espressif", fam) for fam in _FAMILY_TO_CORE),
 )
 class EspIdfExtractor:
     """Espressif ESP-IDF extractor — Phase 1.4 implementation."""
@@ -93,6 +104,15 @@ class EspIdfExtractor:
         provenance["source_id"] = "esp-idf"
         provenance["source_path"] = str(svd_path)
         payload["provenance"] = provenance
+
+        # Per-family core fallback — ESP32 SVDs don't carry a
+        # CMSIS-SVD-style <cpu> element (Xtensa / RISC-V variants).
+        identity = dict(payload.get("identity", {}))
+        if not identity.get("core"):
+            fallback = _FAMILY_TO_CORE.get(request.family)
+            if fallback:
+                identity["core"] = fallback
+                payload["identity"] = identity
 
         return ExtractionResult(
             payload=payload,
