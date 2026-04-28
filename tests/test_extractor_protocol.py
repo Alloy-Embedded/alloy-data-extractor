@@ -47,19 +47,66 @@ def test_resolve_by_id_unknown_raises_with_known_listed() -> None:
 
 
 def test_resolve_for_admitted_pair_succeeds() -> None:
+    """STM32 has a dedicated extractor that wins via specificity
+    over the vendor-wide CMSIS-SVD one."""
     ext = resolve_extractor("st", "stm32g0")
+    assert ext.extractor_id == "stm32"
+
+
+def test_resolve_for_non_specific_vendor_uses_cmsis_svd_catchall() -> None:
+    """CMSIS-SVD remains the catch-all for vendors with no
+    dedicated family-bound extractor."""
+    ext = resolve_extractor("gigadevice", "gd32f4")
     assert ext.extractor_id == "cmsis-svd"
 
 
-def test_ambiguous_resolution_raises_with_candidate_ids_listed() -> None:
-    """Nordic + nrf52 is admitted by cmsis-svd (vendor binding)
-    and zephyr-dts (family binding); the resolver MUST refuse
-    to silently pick one — caller picks via id."""
+def test_family_specific_wins_over_vendor_wide() -> None:
+    """Nordic + nrf52 is admitted by both cmsis-svd (vendor-bound)
+    and zephyr-dts (family-bound); the resolver picks the
+    family-bound one via specificity."""
+    ext = resolve_extractor("nordic", "nrf52")
+    assert ext.extractor_id == "zephyr-dts"
+
+
+def test_ambiguous_family_specific_raises_with_candidate_ids_listed() -> None:
+    """Two extractors registering the same (vendor, family) tuple
+    must trigger an ambiguity error — caller picks via id."""
+
+    @register_extractor("ambig-a", families=(("ambigvendor", "ambigfam"),))
+    class _AmbigA:
+        extractor_id: str = "ambig-a"
+
+        def supports(self, vendor: str, family: str) -> bool:  # noqa: D401
+            del vendor, family
+            return False
+
+        def extract(self, request: ExtractionRequest) -> ExtractionResult:
+            del request
+            return ExtractionResult(
+                payload={},
+                provenance=ProvenanceRecord(source_id="x", source_path=None, revision="r"),
+            )
+
+    @register_extractor("ambig-b", families=(("ambigvendor", "ambigfam"),))
+    class _AmbigB:
+        extractor_id: str = "ambig-b"
+
+        def supports(self, vendor: str, family: str) -> bool:  # noqa: D401
+            del vendor, family
+            return False
+
+        def extract(self, request: ExtractionRequest) -> ExtractionResult:
+            del request
+            return ExtractionResult(
+                payload={},
+                provenance=ProvenanceRecord(source_id="x", source_path=None, revision="r"),
+            )
+
     with pytest.raises(ValueError, match="ambiguous") as excinfo:
-        resolve_extractor("nordic", "nrf52")
+        resolve_extractor("ambigvendor", "ambigfam")
     msg = str(excinfo.value)
-    assert "cmsis-svd" in msg
-    assert "zephyr-dts" in msg
+    assert "ambig-a" in msg
+    assert "ambig-b" in msg
 
 
 def test_resolve_for_unknown_pair_raises_with_bindings_listed() -> None:

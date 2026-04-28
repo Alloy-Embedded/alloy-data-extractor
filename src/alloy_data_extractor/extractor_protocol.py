@@ -200,22 +200,44 @@ def _admits(extractor: Extractor, vendor: str, family: str) -> bool:
     return False
 
 
+def _is_family_specific(extractor: Extractor, vendor: str, family: str) -> bool:
+    """True if the extractor admits this pair via its
+    family-binding (more specific) rather than a vendor-wide
+    catch-all.
+    """
+    return (vendor, family) in getattr(extractor, "_admitted_families", frozenset())
+
+
 def resolve_extractor(vendor: str, family: str) -> Extractor:
     """Return the extractor admitting ``(vendor, family)``.
 
-    Raises :class:`ValueError` listing every registered pair if
-    none admits the request.
+    Specificity rule: when a family-bound extractor and a
+    vendor-wide extractor both admit the pair, the family-bound
+    one wins.  This lets vendor-specific extractors (e.g.
+    ``stm32``) take over for the ST families while CMSIS-SVD
+    stays the catch-all for the rest.
+
+    Raises :class:`ValueError` if no extractor admits the pair
+    or if multiple equally-specific candidates do.
     """
     candidates = [ext for ext in _REGISTRY.values() if _admits(ext, vendor, family)]
-    if len(candidates) == 1:
-        return candidates[0]
     if not candidates:
-        bindings = _format_bindings()
         raise ValueError(
             f"no extractor registered for ({vendor!r}, {family!r}). "
-            f"Registered: {bindings}"
+            f"Registered: {_format_bindings()}"
         )
-    # Multiple candidates — caller must pick by id explicitly.
+    # Specificity tier: family-bound > vendor-bound.
+    family_specific = [c for c in candidates if _is_family_specific(c, vendor, family)]
+    if family_specific:
+        if len(family_specific) == 1:
+            return family_specific[0]
+        ids = sorted(c.extractor_id for c in family_specific)
+        raise ValueError(
+            f"ambiguous: {len(family_specific)} family-specific extractors admit "
+            f"({vendor!r}, {family!r}): {ids}.  Pick one via resolve_extractor_by_id(...)."
+        )
+    if len(candidates) == 1:
+        return candidates[0]
     ids = sorted(c.extractor_id for c in candidates)
     raise ValueError(
         f"ambiguous: {len(candidates)} extractors admit ({vendor!r}, {family!r}): "
