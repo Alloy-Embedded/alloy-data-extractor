@@ -60,12 +60,12 @@ def test_admitted_pair_resolves_to_dedicated_extractor(
     )
 
 
-# Extractors that are still stubs (NotImplementedError-shaped):
-# the rest have real implementations and raise ValueError when
-# their source paths are missing.
-_STILL_STUB = {
-    "microchip-dfp",
-}
+# Extractors that are still stubs (NotImplementedError-shaped).
+# After the autonomous Phase-1 round, every primary extractor
+# has a real implementation; the remaining stub is the secondary
+# `modm-devices` enrichment which depends on Phase 2.2's
+# cross-source merge engine.
+_STILL_STUB: set[str] = set()
 
 
 @pytest.mark.parametrize(

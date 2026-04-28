@@ -66,6 +66,8 @@ def synth_svd(tmp_path: Path) -> Path:
         ("espressif", "esp32", "esp32", "esp-idf"),
         ("espressif", "esp32c3", "esp32c3", "esp-idf"),
         ("espressif", "esp32s3", "esp32s3", "esp-idf"),
+        # Microchip uses ATDF instead of CMSIS-SVD — same synthetic
+        # XML structure won't parse, so we exercise it separately.
     ],
 )
 def test_phase1_real_extractor_emits_canonical_payload(
@@ -103,6 +105,7 @@ def test_phase1_real_extractor_emits_canonical_payload(
         ("raspberrypi", "rp2040", "rp2040"),
         ("nxp", "imxrt1060", "mimxrt1062"),
         ("espressif", "esp32", "esp32"),
+        ("microchip", "same70", "atsame70q21b"),
     ],
 )
 def test_phase1_real_extractor_raises_value_error_when_no_source(
@@ -122,3 +125,43 @@ def test_phase1_real_extractor_raises_value_error_when_no_source(
     )
     with pytest.raises(ValueError):
         ext.extract(request)
+
+
+def test_microchip_dfp_extracts_synthetic_atdf(tmp_path: Path) -> None:
+    """ATDF parser smoke test: feed a minimal ATDF and verify
+    the extractor pulls peripherals + interrupts."""
+    atdf_text = textwrap.dedent("""\
+        <?xml version="1.0"?>
+        <avr-tools-device-file>
+          <devices>
+            <device architecture="CORTEX-M7" family="SAME" name="ATSYNTH">
+              <peripherals>
+                <module name="UART">
+                  <instance name="UART0">
+                    <register-group name="UART0" address-space="base" offset="0x40010000"/>
+                  </instance>
+                </module>
+              </peripherals>
+              <interrupts>
+                <interrupt index="10" name="UART0" module-instance="UART0"/>
+              </interrupts>
+            </device>
+          </devices>
+        </avr-tools-device-file>
+    """)
+    atdf_path = tmp_path / "ATSYNTH.atdf"
+    atdf_path.write_text(atdf_text, encoding="utf-8")
+
+    ext = resolve_extractor("microchip", "same70")
+    request = ExtractionRequest(
+        vendor="microchip",
+        family="same70",
+        device="atsynth",
+        source_paths={"atdf": atdf_path},
+        revision="rev",
+    )
+    result = ext.extract(request)
+    assert result.payload["identity"]["core"] == "cortex-m7"
+    assert result.payload["provenance"]["source_id"] == "microchip-dfp"
+    assert any(p["name"] == "UART0" for p in result.payload["peripherals"])
+    assert any(i["line"] == 10 for i in result.payload["interrupts"])
