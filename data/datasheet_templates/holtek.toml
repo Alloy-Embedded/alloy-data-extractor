@@ -1,0 +1,16 @@
+# Holtek HT32 / HT8 datasheet scraping template
+# (`add-modm-data-pdf-extractor` Phase 4.1).
+#
+# Each pattern is a regex with named groups the scraper consumes:
+#
+# * memory_map.<name>: groups `base` (hex) + `size` (int + optional unit)
+# * peripheral.<kind>: groups `base` (hex) + optional `index`
+
+[memory_map]
+flash = "Flash memory.*?(?P<base>0x[0-9a-fA-F]+).*?(?P<size>\\d+\\s*KB)"
+sram = "SRAM.*?(?P<base>0x[0-9a-fA-F]+).*?(?P<size>\\d+\\s*KB)"
+
+[peripheral]
+uart = "USART(?P<index>\\d+).*?Base address[:\\s]+(?P<base>0x[0-9a-fA-F]+)"
+gpio = "GPIO\\s+Port\\s+(?P<index>[A-Z]).*?Base address[:\\s]+(?P<base>0x[0-9a-fA-F]+)"
+timer = "TIM(?P<index>\\d+).*?Base address[:\\s]+(?P<base>0x[0-9a-fA-F]+)"

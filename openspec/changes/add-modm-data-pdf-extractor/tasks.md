@@ -1,21 +1,36 @@
 # Tasks — add-modm-data-pdf-extractor
 
-## Scaffold (autonomous round)
+## Phase 1: PDF scraper (autonomous round)
 
-- [x] S.1 Register `datasheet-pdf` extractor with synthetic
-      family binding (invoked explicitly per-template, not
-      auto-resolved).
-- [x] S.2 Wire scaffold into `pipeline.py` side-effect imports.
-- [x] S.3 Test scaffold registration.
+- [x] 1.1 Implement `extractors/datasheet_pdf.py` with
+      pdfminer.six text extraction + per-vendor template
+      driven scraping (memory map + peripheral base addresses).
+- [x] 1.2 Schema: every PDF-sourced YAML carries
+      `provenance.confidence: low` + `source_id: datasheet-pdf-scrape`.
+- [x] 1.3 Per-vendor template format under
+      `data/datasheet_templates/<vendor>.toml`; demo template
+      shipped for Holtek HT32.
+- [x] 1.4 Tests (`test_datasheet_pdf_extractor.py`): synthetic
+      text scraping + memory-map / peripheral / dedup /
+      size-unit-conversion + reportlab-rendered PDF round-trip
+      (skipped when reportlab missing).
 
-## Phase 1: Implementation
+## Phase 2: Codegen-side opt-in
 
-- [ ] 1.1 Implement `extractors/datasheet_pdf.py` (pdfminer.six +
-      template-based scraper).
-- [ ] 1.2 Schema bump: add optional `provenance.confidence`.
-- [ ] 1.3 Per-vendor template format under
-      `data/datasheet_templates/<vendor>.toml`.
-- [ ] 1.4 Demo template: scrape one Holtek HT32 datasheet end-to-end.
-- [ ] 1.5 Codegen-side opt-in: `--accept-low-confidence` flag.
-- [ ] 1.6 `openspec validate add-modm-data-pdf-extractor --strict`.
-- [ ] 1.7 Archive + commit.
+- [ ] 2.1 alloy-codegen consumer adds `--accept-low-confidence`
+      flag.  Without it, the YAML loader refuses
+      `provenance.confidence: low` documents.
+- [ ] 2.2 Boundary test: low-confidence YAMLs are excluded by
+      default from the parity gate + emission stages.
+
+## Phase 3: Register-tree scraping (follow-up)
+
+- [ ] 3.1 Modm-data-style table recognition for register-tree
+      extraction (much harder; deferred to a dedicated session).
+
+## Phase 4: Validate + archive
+
+- [x] 4.1 `openspec validate add-modm-data-pdf-extractor --strict`.
+- [x] 4.2 Pytest green (147/147 + 2 skips).
+- [ ] 4.3 Archive — kept open until Phase 2 codegen-side
+      opt-in lands.
