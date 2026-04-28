@@ -60,9 +60,21 @@ def test_admitted_pair_resolves_to_dedicated_extractor(
     )
 
 
+# Extractors that are still stubs (NotImplementedError-shaped):
+# the rest have real implementations and raise ValueError when
+# their source paths are missing.
+_STILL_STUB = {
+    "microchip-dfp",
+}
+
+
 @pytest.mark.parametrize(
     ("vendor", "family", "extractor_id"),
-    [(v, f, e) for (v, f), e in _PHASE1_EXPECTATIONS.items() if e != "zephyr-dts"],
+    [
+        (v, f, e)
+        for (v, f), e in _PHASE1_EXPECTATIONS.items()
+        if e in _STILL_STUB
+    ],
 )
 def test_phase1_stubs_raise_not_implemented(
     vendor: str, family: str, extractor_id: str
