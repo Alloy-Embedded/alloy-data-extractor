@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from alloy_data_extractor.emit.canonical_yaml import write_device_yaml
-from alloy_data_extractor.extractors import cmsis_svd
+from alloy_data_extractor.extractors import cmsis_svd, zephyr_dts
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +36,7 @@ class ExtractionResult:
 # entries land as additional extractors migrate over.
 _EXTRACTORS = {
     "cmsis-svd": cmsis_svd,
+    "zephyr-dts": zephyr_dts,
 }
 
 
