@@ -48,3 +48,39 @@ license = "BSD-3-Clause / MPL-2.0"
 origin_url = "https://github.com/raspberrypi/pico-sdk"
 revision = "master"
 license = "BSD-3-Clause"
+
+# ---------------------------------------------------------------------------
+# Community RISC-V vendors — `add-riscv-community-svd-extractor`
+# (Phase 3.4) admits these via the existing CMSIS-SVD extractor.
+# Each pins one upstream SVD repository per vendor.
+# ---------------------------------------------------------------------------
+
+[gigadevice-svd]
+origin_url = "https://github.com/riscv-rust/gd32vf103-pac"
+revision = "master"
+license = "MIT OR Apache-2.0"
+notes = "GD32V series (GD32VF103 etc) — ~10 chips."
+
+[bouffalo-svd]
+origin_url = "https://github.com/bouffalolab/bl_iot_sdk"
+revision = "master"
+license = "Apache-2.0"
+notes = "BL602 / BL702 / BL808 / BL616 — RISC-V (~5 chips)."
+
+[wch-svd]
+origin_url = "https://github.com/openwch/ch32v003"
+revision = "main"
+license = "Apache-2.0"
+notes = "CH32V series (RV32EC / IMC / IMAFC) — ~30 chips."
+
+[kendryte-svd]
+origin_url = "https://github.com/kendryte/kendryte-standalone-sdk"
+revision = "develop"
+license = "Apache-2.0"
+notes = "K210 / K230 — RV64GC dual-core."
+
+[allwinner-svd]
+origin_url = "https://github.com/smaeul/sun20i_d1_splboot"
+revision = "master"
+license = "GPL-2.0-or-later"
+notes = "Allwinner D1 / D1s — single-core RV64GC."

@@ -25,12 +25,17 @@ from alloy_data_extractor.extractor_protocol import (
     resolve_extractor_by_id,
 )
 from alloy_data_extractor.extractors import cmsis_svd as _cmsis_svd  # noqa: F401
+from alloy_data_extractor.extractors import datasheet_pdf as _datasheet_pdf  # noqa: F401
 from alloy_data_extractor.extractors import esp_idf as _esp_idf  # noqa: F401
+from alloy_data_extractor.extractors import intel_8051 as _intel_8051  # noqa: F401
 from alloy_data_extractor.extractors import microchip_dfp as _microchip_dfp  # noqa: F401
+from alloy_data_extractor.extractors import microchip_pic as _microchip_pic  # noqa: F401
 from alloy_data_extractor.extractors import modm_devices as _modm_devices  # noqa: F401
+from alloy_data_extractor.extractors import msp430 as _msp430  # noqa: F401
 from alloy_data_extractor.extractors import nxp_mcux as _nxp_mcux  # noqa: F401
 from alloy_data_extractor.extractors import rp2040 as _rp2040  # noqa: F401
 from alloy_data_extractor.extractors import stm32 as _stm32  # noqa: F401
+from alloy_data_extractor.extractors import stm32_cubemx as _stm32_cubemx  # noqa: F401
 from alloy_data_extractor.extractors import zephyr_dts as _zephyr_dts  # noqa: F401
 
 

@@ -1,5 +1,13 @@
 # Tasks — add-microchip-pic-extractor
 
+## Scaffold (autonomous round)
+
+- [x] S.1 Register `microchip-pic` Extractor for PIC8/16/18 +
+      PIC24/dsPIC33 + PIC32MX/MZ/MK families (registration only;
+      parsing raises NotImplementedError).
+- [x] S.2 Wire scaffold into `pipeline.py` side-effect imports.
+- [x] S.3 Test scaffold resolution + NotImplementedError shape.
+
 ## Phase 1: PIC8/16/18 (~1,500 chips)
 
 - [ ] 1.1 Implement `extractors/microchip_dfp/pic.py` (Harvard 8-bit).

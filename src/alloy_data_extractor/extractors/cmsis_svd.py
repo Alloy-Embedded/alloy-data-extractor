@@ -193,6 +193,12 @@ from alloy_data_extractor.extractor_protocol import (  # noqa: E402
     # not required.  Specific vendor-specific extractors (e.g.
     # stm32) can override by registering with families= and
     # winning the resolver via specificity.
+    #
+    # The community RISC-V vendors (gigadevice, bouffalo, wch,
+    # kendryte, allwinner) ride on the CMSIS-SVD adapter via
+    # `add-riscv-community-svd-extractor` (Phase 3.4) — they
+    # publish CMSIS-SVD-compatible XML and need nothing more
+    # than this registration entry.
     vendors=(
         "st",
         "nordic",
