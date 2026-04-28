@@ -24,6 +24,7 @@ from alloy_data_extractor.extractor_protocol import (
     resolve_extractor,
     resolve_extractor_by_id,
 )
+from alloy_data_extractor.extractors import cmsis_pack as _cmsis_pack  # noqa: F401
 from alloy_data_extractor.extractors import cmsis_svd as _cmsis_svd  # noqa: F401
 from alloy_data_extractor.extractors import datasheet_pdf as _datasheet_pdf  # noqa: F401
 from alloy_data_extractor.extractors import esp_idf as _esp_idf  # noqa: F401
