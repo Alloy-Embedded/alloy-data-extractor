@@ -31,24 +31,30 @@ invariant before the next begins.
 | Bulk-mode (auto-discover chips from cmsis-pack-manager) | ✅ Phase 2.1 archived |
 | Cross-source merge (SVD ⊕ open-pin-data ⊕ modm) | ✅ Phase 2.2 archived |
 | Coverage index + dashboard | ✅ Phase 2.3 archived |
-| Bulk-admitted catalog | ✅ **4,400+ chips** across 22 vendors |
+| Bulk-admitted catalog | ✅ **8,500+ chips** across 22 vendors / 1,180+ families |
 | Zephyr DTS pipeline (8 vendors mapped) | ✅ 159/164 chips extract clean |
 | PIC / MSP430 / 8051 / community RISC-V | ✅ Real implementations + tests |
 | Vendor parsers still living in `alloy-codegen/src/alloy_codegen/sources/` | ⏳ Pending Phase 1 codegen-side cleanup |
 
-**Bulk-admitted catalog breakdown:**
+**Bulk-admitted catalog breakdown (8,505 chips total):**
 
-* **CMSIS-Pack manager** — 3,650 chips across 16 vendors (SiLabs,
-  Cypress, Infineon, Nuvoton, TI, Renesas, Toshiba, ARM, Ambiq,
-  + 8 community vendors).  Pulls per-chip pack zips on demand,
-  extracts SVD, cross-references catalog metadata.
+* **CMSIS-Pack manager** — 7,700+ chips across 16 vendors (ST,
+  SiLabs, Nuvoton, Infineon, Cypress, TI, Renesas, Toshiba,
+  ARM, Ambiq, + 7 community vendors).  Pulls per-chip pack
+  zips on demand, extracts SVD, cross-references catalog
+  metadata for accurate core/memory.
 * **STM32 cross-source merge** — 503 chips (CMSIS-SVD ⊕ STM32
-  open-pin-data ⊕ optionally modm-devices).  Schema_version 1.3.0
-  with per-field provenance.
+  open-pin-data ⊕ optionally modm-devices).  Schema_version
+  1.3.0 with per-field provenance.
 * **Zephyr DTS** — 159 chips across nordic / atmel / ambiq /
   silabs / ti families (cpp-preprocessed `.dtsi` → dtlib).
-* **Vendor-direct extractors** — 17 admitted + 47 Microchip ATDF
-  + 8 Espressif + 2 NXP iMXRT.
+* **Vendor-direct extractors** — 17 admitted + 47 Microchip
+  ATDF + 8 Espressif + 2 NXP iMXRT.
+
+**Moat target hit.**  The original ROADMAP set ~8,000 chips
+as the "single OSS framework covering PIC + AVR + ARM + RISC-V
++ Xtensa simultaneously" goal.  At 8,505 chips the catalog
+exceeds that target.
 
 Total active extractors: **15** (cmsis-pack, cmsis-svd,
 datasheet-pdf, esp-idf, intel-8051, microchip-dfp, microchip-pic,
