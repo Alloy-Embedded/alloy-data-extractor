@@ -2,14 +2,12 @@
 
 ### Requirement: The rp2040 extractor SHALL project I2C / PWM / Timer tier data
 
-When the `rp2040` extractor processes a device whose source
-bundle includes the pico-sdk tree, the resulting canonical IR
-SHALL populate `device.i2c_speed_options`,
-`device.i2c_timing_presets`, `device.i2c_mode_flags`,
-`device.pwm_alignment_options`, `device.pwm_mode_flags`,
-`device.timer_master_outputs`, and `device.timer_mode_flags`
-from the pico-sdk's `hardware_i2c`, `hardware_pwm`, and
-`hardware_timer` headers.
+The rp2040 extractor SHALL parse the pico-sdk's `hardware_i2c`,
+`hardware_pwm`, and `hardware_timer` headers and SHALL populate
+`device.i2c_speed_options`, `device.i2c_timing_presets`,
+`device.i2c_mode_flags`, `device.pwm_alignment_options`,
+`device.pwm_mode_flags`, `device.timer_master_outputs`, and
+`device.timer_mode_flags` for every admitted RP2040 device.
 
 #### Scenario: rp2040 advertises three I2C speeds
 

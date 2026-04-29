@@ -2,16 +2,14 @@
 
 ### Requirement: The modm-devices extractor SHALL project Timer + PWM tier data
 
-When a device's modm-devices descriptor carries
-`<driver name="timer">` blocks, the extractor SHALL parse the
-embedded prescaler / trigger / master-output / capability
-metadata and project it onto the canonical IR's
-`timer_prescaler_options`, `timer_trigger_sources`,
-`timer_master_outputs`, `timer_mode_flags`,
-`pwm_alignment_options`, and `pwm_break_inputs` fields.  Devices
-without modm timer blocks (non-STM32 ARM Cortex-M parts) SHALL
-be skipped silently — those vendors fill the same fields
-through their own extractors.
+The modm-devices extractor SHALL parse every
+`<driver name="timer">` block in a device's modm descriptor and project the
+embedded prescaler, trigger, master-output, and capability metadata onto the
+canonical IR's `timer_prescaler_options`, `timer_trigger_sources`,
+`timer_master_outputs`, `timer_mode_flags`, `pwm_alignment_options`, and
+`pwm_break_inputs` fields.  Devices without modm timer blocks (non-STM32 ARM
+Cortex-M parts) SHALL be skipped silently — those vendors fill the same
+fields through their own extractors.
 
 #### Scenario: STM32G0B1 timers project full ITR + master matrix
 

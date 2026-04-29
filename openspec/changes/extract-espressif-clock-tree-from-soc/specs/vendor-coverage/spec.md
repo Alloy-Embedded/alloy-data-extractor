@@ -2,15 +2,13 @@
 
 ### Requirement: The esp_idf extractor SHALL project the SoC clock tree
 
-For every Espressif device admitted via the `esp_idf`
-extractor, the resulting canonical IR's `device.clock_nodes`,
-`device.clock_selectors`, `device.clock_gates`,
-`device.peripheral_clock_bindings`, and
-`device.system_clock_profiles` SHALL be populated by parsing
-`components/soc/<chip>/include/soc/clk_tree_defs.h`,
+The `esp_idf` extractor SHALL parse `components/soc/<chip>/include/soc/clk_tree_defs.h`,
 `components/soc/<chip>/clk_tree_hal.c`, and
-`components/hal/<chip>/include/hal/clk_gate_ll.h` from the
-esp-idf source tree.
+`components/hal/<chip>/include/hal/clk_gate_ll.h` from the esp-idf source
+tree and SHALL project the resulting clock graph onto the canonical IR's
+`device.clock_nodes`, `device.clock_selectors`, `device.clock_gates`,
+`device.peripheral_clock_bindings`, and `device.system_clock_profiles`
+fields for every Espressif device admitted via the extractor.
 
 #### Scenario: esp32 carries a multi-source CPU clock graph
 

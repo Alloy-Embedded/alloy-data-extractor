@@ -2,19 +2,16 @@
 
 ### Requirement: The Zephyr-DTS extractor SHALL project register + clock-tree data from Zephyr binding YAMLs
 
-When a device admitted via the Zephyr-DTS extractor has
-matching binding YAMLs under `dts/bindings/<peripheral>/`, the
-extractor SHALL parse those YAMLs and project their
-`properties` / `register-map` / `register-fields` blocks onto
-the canonical IR's `device.registers` and
-`device.register_fields`.  When the family also ships a
-Zephyr clock-tree binding (e.g.
-`zephyr/include/zephyr/dt-bindings/clock/<vendor>_clock.h`),
-the extractor SHALL build the canonical
-`device.clock_nodes` / `device.clock_selectors` /
-`device.clock_gates` from the constants there and SHALL bake at
-least one default `system_clock_profiles` entry capturing the
-post-reset clock state.
+The Zephyr-DTS extractor SHALL parse matching `dts/bindings/<peripheral>/`
+YAMLs for every admitted device and project their `properties`,
+`register-map`, and `register-fields` blocks onto the canonical IR's
+`device.registers` and `device.register_fields`.  When the family also
+ships a Zephyr clock-tree binding header
+(`zephyr/include/zephyr/dt-bindings/clock/<vendor>_clock.h`), the
+extractor SHALL build the canonical `device.clock_nodes`,
+`device.clock_selectors`, and `device.clock_gates` from those constants
+and SHALL bake at least one default `system_clock_profiles` entry
+capturing the post-reset clock state.
 
 #### Scenario: nrf52840 register density matches Nordic Product Spec
 
