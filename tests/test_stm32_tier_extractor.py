@@ -32,7 +32,7 @@ from alloy_data_extractor.extractors.stm32_tier import (  # noqa: E402
     _ResolvedInstance,
 )
 from alloy_data_extractor.extractors.stm32_tier_mappings import (  # noqa: E402
-    ADC_F4_V3_TIER,
+    ADC_F4_V1_TIER,
     ADC_G0_V3_TIER,
     ALL_TIER_MAPPINGS,
     SPI_V3_TIER,
@@ -53,7 +53,7 @@ from alloy_data_extractor.extractors.stm32_tier_mappings import (  # noqa: E402
         ("USART", "sci3_v2_1_Cube", USART_SCI3_V2_TIER),
         ("USART", "sci3_v2_5_Cube", USART_SCI3_V2_TIER),
         ("ADC", "aditf4_v3_0_G0_Cube", ADC_G0_V3_TIER),
-        ("ADC", "aditf2_v3_0_Cube", ADC_F4_V3_TIER),
+        ("ADC", "aditf2_v1_1_Cube", ADC_F4_V1_TIER),
         ("SPI", "spi2s1_v3_3_Cube", SPI_V3_TIER),
         ("TIM1_8G0", "gptimer2_v3_x_Cube", TIMER_GPTIMER_V3_TIER),
     ],

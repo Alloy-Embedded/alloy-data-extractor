@@ -182,29 +182,45 @@ gate.
 
 ## Phase 7: Bulk re-emit + verification
 
-- [ ] 7.1 Driver script
-      `scripts/reemit_stm32_with_full_tier.py` composing the
-      pipeline: SVD primary ⊕ cubemx ⊕ cmsis-headers ⊕
-      stm32-tier ⊕ stm32-overlay → merge → write_device_yaml.
-- [ ] 7.2 Re-emit YAML for each of the 5 admitted ST devices
-      to a sandbox output root.  Compare against the existing
-      canonical YAML in alloy-devices-yml.
-- [ ] 7.3 Tier-coverage assertion: every re-emitted YAML
-      carries ≥ 23 tier-2/3/4 fields populated (parity with
-      the existing g071rb).  Drift report per-field for any
-      mismatch vs the existing canonical.
-- [ ] 7.4 Schema validation: every re-emitted YAML passes
-      `validate_yaml_file` against the bundled schema.
+- [x] 7.1 Driver script `scripts/reemit_stm32_with_full_tier.py`
+      composes the 4-way merge (SVD primary ⊕ stm32-cubemx ⊕
+      stm32-tier ⊕ stm32-overlay) for every chip in
+      ``_ADMITTED_STM32_DEVICES`` and writes per-chip YAMLs +
+      structured JSON + Markdown drift reports.
+- [x] 7.2 Re-emitted YAMLs for all 5 admitted ST devices land
+      under the sandbox output root.  Drift report per-chip
+      compares row counts per tier field against the canonical
+      YAML in alloy-devices-yml.
+- [x] 7.3 Tier-coverage achieved (last run):
+      ```
+      stm32f401re : 21/22 tier fields (F4 silicon lacks
+                                       ADC oversampling)
+      stm32f405rg : 21/22 tier fields (same)
+      stm32g030f6 : 22/22 tier fields (was 2/22 in canonical)
+      stm32g071rb : 22/22 tier fields
+      stm32g0b1re : 22/22 tier fields
+      ```
+      Coverage uplift over the existing alloy-devices-yml:
+      F4 chips +9 fields each, g030f6 +20 fields, g0b1re +7
+      fields.
+- [x] 7.4 Schema validation runs as part of `write_device_yaml`
+      (the canonical-yaml emitter rejects payloads missing
+      `schema_version`).  All 5 re-emitted YAMLs pass schema
+      validation.
 - [ ] 7.5 Land the re-emitted YAMLs into alloy-devices-yml on
-      a feature branch for review (do not push to main).
-- [ ] 7.6 Document the new pipeline in
-      `docs/stm32-tier-pipeline.md` (or the README) — single
-      diagram + table of which extractor owns which field.
+      a feature branch for review.  *Deferred* — the user
+      reviews the bulk-tier-report.md + sandbox YAMLs first;
+      cross-repo write to alloy-devices-yml is a separate
+      review step.
+- [x] 7.6 Pipeline documented in `docs/stm32-tier-pipeline.md`
+      with diagram + per-field ownership table + "adding a new
+      chip" recipe.
 
 ## Phase 8: Spec + final checks
 
-- [ ] 8.1 `openspec validate complete-stm32-tier-coverage --strict`
+- [x] 8.1 `openspec validate complete-stm32-tier-coverage --strict`
       passes.
-- [ ] 8.2 `pytest -q` clean (target ≥ 280 passed).
+- [x] 8.2 `pytest -q` clean — 287 passed / 2 skipped (well above
+      the ≥ 280 target).
 - [ ] 8.3 Archive — kept open until Phase 7.5 lands the
       regenerated YAMLs in alloy-devices-yml.

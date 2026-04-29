@@ -137,6 +137,15 @@ SPI_V3_TIER = TierMapping(
     ),
 )
 
+# STM32F4 SPI uses spi2s1_v2_x_Cube — same BR encoding (8 prescalers).
+SPI_V2_TIER = TierMapping(
+    ip_name="SPI",
+    ip_version_pattern=re.compile(r"^spi2s1_v2_\d+_Cube$"),
+    projections=(
+        TierProjection("spi_baud_prescaler_options", _SPI_BAUD_PRESCALER_ROWS),
+    ),
+)
+
 
 # ---------------------------------------------------------------------------
 # I2C — STM32G0 (i2c2_v1_1_Cube)
@@ -159,6 +168,24 @@ I2C_V1_TIER = TierMapping(
     ip_name="I2C",
     ip_version_pattern=re.compile(r"^i2c2_v\d+_\d+_Cube$"),
     projections=(TierProjection("i2c_mode_flags", _I2C_MODE_FLAGS_ROWS),),
+)
+
+# STM32F4 I2C — older `i2c1_v1_x_Cube` IP.  No fast-plus, no
+# clock-stretching wakeup; otherwise comparable surface.
+_I2C_F4_MODE_FLAGS_ROWS: tuple[dict[str, Any], ...] = (
+    {
+        "supports_smbus": True,
+        "supports_pec": True,
+        "supports_dnf": False,  # F4 has analog filter only
+        "supports_clock_stretching": True,
+        "supports_wakeup_from_stop": False,
+    },
+)
+
+I2C_F4_TIER = TierMapping(
+    ip_name="I2C",
+    ip_version_pattern=re.compile(r"^i2c1_v\d+_\d+_Cube$"),
+    projections=(TierProjection("i2c_mode_flags", _I2C_F4_MODE_FLAGS_ROWS),),
 )
 
 
@@ -214,15 +241,50 @@ ADC_G0_V3_TIER = TierMapping(
     ),
 )
 
-# STM32F4 ADC — different IP (aditf2_v3_x_Cube on F4).  No
-# oversampling; resolutions are 12/10/8/6 same as G0.
+# STM32F4 ADC — `aditf2_v1_x_Cube` IP.  No oversampling;
+# resolutions are 12/10/8/6 same as G0.  Sample-time encoding
+# is different (3/15/28/56/84/112/144/480 cycles vs G0's
+# 1.5..160.5).
 _ADC_F4_RESOLUTION_ROWS = _ADC_G0_RESOLUTION_ROWS  # same encoding
+_ADC_F4_SAMPLE_TIME_ROWS: tuple[dict[str, Any], ...] = (
+    {"cycles": "3", "raw_value": 0},
+    {"cycles": "15", "raw_value": 1},
+    {"cycles": "28", "raw_value": 2},
+    {"cycles": "56", "raw_value": 3},
+    {"cycles": "84", "raw_value": 4},
+    {"cycles": "112", "raw_value": 5},
+    {"cycles": "144", "raw_value": 6},
+    {"cycles": "480", "raw_value": 7},
+)
+# F4 EXTSEL is 4 bits (16 sources).  Common subset for F405 /
+# F407 — RM0090 §13.13.4 table 38.  Other F4 chips share the
+# core entries.
+_ADC_F4_EXTERNAL_TRIGGER_ROWS: tuple[dict[str, Any], ...] = (
+    {"trigger": "TIM1_CC1", "raw_value": 0},
+    {"trigger": "TIM1_CC2", "raw_value": 1},
+    {"trigger": "TIM1_CC3", "raw_value": 2},
+    {"trigger": "TIM2_CC2", "raw_value": 3},
+    {"trigger": "TIM2_CC3", "raw_value": 4},
+    {"trigger": "TIM2_CC4", "raw_value": 5},
+    {"trigger": "TIM2_TRGO", "raw_value": 6},
+    {"trigger": "TIM3_CC1", "raw_value": 7},
+    {"trigger": "TIM3_TRGO", "raw_value": 8},
+    {"trigger": "TIM4_CC4", "raw_value": 9},
+    {"trigger": "TIM5_CC1", "raw_value": 10},
+    {"trigger": "TIM5_CC2", "raw_value": 11},
+    {"trigger": "TIM5_CC3", "raw_value": 12},
+    {"trigger": "TIM8_CC1", "raw_value": 13},
+    {"trigger": "TIM8_TRGO", "raw_value": 14},
+    {"trigger": "EXTI11", "raw_value": 15},
+)
 
-ADC_F4_V3_TIER = TierMapping(
+ADC_F4_V1_TIER = TierMapping(
     ip_name="ADC",
     ip_version_pattern=re.compile(r"^aditf2_v\d+_\d+_Cube$"),
     projections=(
         TierProjection("adc_resolution_options", _ADC_F4_RESOLUTION_ROWS),
+        TierProjection("adc_sample_time_options", _ADC_F4_SAMPLE_TIME_ROWS),
+        TierProjection("adc_external_triggers", _ADC_F4_EXTERNAL_TRIGGER_ROWS),
     ),
 )
 
@@ -276,7 +338,7 @@ _TIM_MODE_FLAGS_ADV_ROWS: tuple[dict[str, Any], ...] = (
         "supports_encoder_mode": True,
     },
 )
-_TIM_MODE_FLAGS_GP_ROWS: tuple[dict[str, Any], ...] = (
+_TIM_MODE_FLAGS_GP_ROWS: tuple[dict[str, Any], ...] = (  # noqa: F841 -- kept for future per-instance gating
     {
         "supports_repetition_counter": False,
         "supports_dma_burst": True,
@@ -331,10 +393,15 @@ TIMER_GPTIMER_V3_TIER = TierMapping(
     ),
 )
 
-# STM32F4 advanced timers (TIM1, TIM8) — adv_timer_v1.
-TIMER_F4_ADV_TIER = TierMapping(
-    ip_name="TIM_ADV",  # CubeMX names vary; matched by version pattern
-    ip_version_pattern=re.compile(r"^adv_timer_v\d+_\d+_Cube$"),
+# STM32F4 — TIM1 / TIM2 / TIM3 / etc. share the
+# `gptimer2_v2_x_Cube` IP version.  TIM1 + TIM8 are advanced
+# (have BDTR + RCR), the others are general-purpose; they share
+# the same SVD-level fields (CR1.CMS, SMCR.TS, CR2.MMS, …).
+# The mapping emits the SUPERSET (advanced); consumers needing
+# per-instance gating use the chip's register tree.
+TIMER_F4_GPTIMER_V2_TIER = TierMapping(
+    ip_name="TIM1_8",
+    ip_version_pattern=re.compile(r"^gptimer2_v2_\w+_Cube$"),
     projections=(
         TierProjection("timer_prescaler_options", _TIM_PRESCALER_ROWS),
         TierProjection("timer_trigger_sources", _TIM_TRIGGER_SOURCE_ROWS),
@@ -344,19 +411,6 @@ TIMER_F4_ADV_TIER = TierMapping(
         TierProjection("pwm_break_inputs", _PWM_BREAK_INPUT_ROWS),
         TierProjection("pwm_deadtime_options", _PWM_DEADTIME_ROWS),
         TierProjection("pwm_mode_flags", _PWM_MODE_FLAGS_ADV_ROWS),
-    ),
-)
-
-# STM32F4 general-purpose timers (TIM2/3/4/5).
-TIMER_F4_GP_TIER = TierMapping(
-    ip_name="TIM_GP",
-    ip_version_pattern=re.compile(r"^gp_timer_v\d+_\d+_Cube$"),
-    projections=(
-        TierProjection("timer_prescaler_options", _TIM_PRESCALER_ROWS),
-        TierProjection("timer_trigger_sources", _TIM_TRIGGER_SOURCE_ROWS),
-        TierProjection("timer_master_outputs", _TIM_MASTER_OUTPUT_ROWS),
-        TierProjection("timer_mode_flags", _TIM_MODE_FLAGS_GP_ROWS),
-        TierProjection("pwm_alignment_options", _TIM_ADV_ALIGNMENT_ROWS),
     ),
 )
 
@@ -376,12 +430,13 @@ ALL_TIER_MAPPINGS: tuple[TierMapping, ...] = (
     USART_SCI3_V2_TIER,
     USART_SCI2_V1_TIER,
     SPI_V3_TIER,
+    SPI_V2_TIER,
     I2C_V1_TIER,
+    I2C_F4_TIER,
     ADC_G0_V3_TIER,
-    ADC_F4_V3_TIER,
+    ADC_F4_V1_TIER,
     TIMER_GPTIMER_V3_TIER,
-    TIMER_F4_ADV_TIER,
-    TIMER_F4_GP_TIER,
+    TIMER_F4_GPTIMER_V2_TIER,
 )
 
 
@@ -399,13 +454,14 @@ def find_tier_mapping(ip_name: str, ip_version: str) -> TierMapping | None:
 
 
 __all__ = [
-    "ADC_F4_V3_TIER",
+    "ADC_F4_V1_TIER",
     "ADC_G0_V3_TIER",
     "ALL_TIER_MAPPINGS",
+    "I2C_F4_TIER",
     "I2C_V1_TIER",
+    "SPI_V2_TIER",
     "SPI_V3_TIER",
-    "TIMER_F4_ADV_TIER",
-    "TIMER_F4_GP_TIER",
+    "TIMER_F4_GPTIMER_V2_TIER",
     "TIMER_GPTIMER_V3_TIER",
     "TierMapping",
     "TierProjection",
