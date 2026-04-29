@@ -147,6 +147,18 @@ class Stm32Extractor:
                 identity["core"] = fallback
                 payload["identity"] = identity
 
+        warnings: list[str] = []
+        if not payload.get("registers"):
+            warnings.append(
+                "STM32 extractor: SVD carried no register tree — "
+                "merged YAMLs will lack `registers` / `register_fields`."
+            )
+        if not payload.get("pins"):
+            warnings.append(
+                "STM32 extractor: pinmux / AF tables not emitted by the "
+                "primary path — compose with stm32-cubemx via the merge "
+                "engine to populate `pins` / `dma_requests`."
+            )
         return ExtractionResult(
             payload=payload,
             provenance=ProvenanceRecord(
@@ -154,10 +166,7 @@ class Stm32Extractor:
                 source_path=str(svd_path),
                 revision=request.revision,
             ),
-            warnings=(
-                "STM32 extractor: pinmux / AF tables not yet emitted — "
-                "Phase 1.1 follow-up ports STM32_open_pin_data.",
-            ),
+            warnings=tuple(warnings),
         )
 
 
