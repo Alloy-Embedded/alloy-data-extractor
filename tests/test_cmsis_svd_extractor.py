@@ -321,3 +321,49 @@ def test_extract_device_now_carries_register_tree(sample_svd: Path) -> None:
     # can rely on their presence.
     assert result.payload["registers"] == []
     assert result.payload["register_fields"] == []
+
+
+# ---------------------------------------------------------------------------
+# Per-row provenance stamping
+# ---------------------------------------------------------------------------
+
+
+def test_peripheral_rows_carry_per_row_provenance(sample_svd: Path) -> None:
+    """Every peripheral row stamps a `provenance` block with the
+    SVD basename + the supplied source_id.  Reviewers can audit
+    which SVD file produced each row, even after merging."""
+    result = extract_device(
+        vendor="acme",
+        family="acme1",
+        device="acme1xx",
+        svd_path=sample_svd,
+        revision="abc",
+    )
+    for peri in result.payload["peripherals"]:
+        assert peri["provenance"]["source_id"] == "cmsis-svd"
+        assert peri["provenance"]["source_path"] == "fake.svd"
+        assert peri["provenance"]["patch_ids"] == []
+    for interrupt in result.payload["interrupts"]:
+        assert interrupt["provenance"]["source_id"] == "cmsis-svd"
+        assert interrupt["provenance"]["source_path"] == "fake.svd"
+
+
+def test_register_rows_carry_per_row_provenance(tmp_path: Path) -> None:
+    """Each register + register_field row carries a per-row
+    provenance block referencing the SVD basename."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(_register_tree_svd(tmp_path)).getroot()
+    registers, fields = _register_and_field_records(
+        root, source_id="cmsis-svd", source_path="rt.svd"
+    )
+    for reg in registers:
+        assert reg["provenance"] == {
+            "source_id": "cmsis-svd",
+            "source_path": "rt.svd",
+            "patch_ids": [],
+        }
+    for fld in fields:
+        assert fld["provenance"]["source_id"] == "cmsis-svd"
+        assert fld["provenance"]["source_path"] == "rt.svd"
+        assert fld["provenance"]["patch_ids"] == []

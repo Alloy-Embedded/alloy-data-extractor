@@ -104,3 +104,12 @@ def test_stm32_extract_with_synthesized_svd_returns_payload(tmp_path: Path) -> N
     assert any(p["name"] == "USART1" for p in result.payload["peripherals"])
     assert any(i["name"] == "USART1_IRQ" for i in result.payload["interrupts"])
     assert result.warnings  # warns about missing pinmux port
+
+    # Per-row provenance was stamped by the cmsis_svd helpers and
+    # then rewritten by the stm32 wrapper to match the top-level
+    # source_id ("stm32" rather than "cmsis-svd").
+    for peri in result.payload["peripherals"]:
+        assert peri["provenance"]["source_id"] == "stm32"
+        assert peri["provenance"]["source_path"] == "STM32SYNTH.svd"
+    for interrupt in result.payload["interrupts"]:
+        assert interrupt["provenance"]["source_id"] == "stm32"

@@ -131,12 +131,20 @@ class Stm32Extractor:
             revision=request.revision,
         )
         # Tag provenance so reviewers can distinguish STM32-specific
-        # extractions from generic CMSIS-SVD ones.
+        # extractions from generic CMSIS-SVD ones — both at the
+        # top level and on every per-row provenance block stamped
+        # by `_peripheral_records` / `_register_and_field_records`.
         payload = dict(legacy.payload)
         provenance = dict(payload.get("provenance", {}))
         provenance["source_id"] = "stm32"
         provenance["source_path"] = str(svd_path)
         payload["provenance"] = provenance
+        for row_field in ("peripherals", "interrupts", "registers", "register_fields"):
+            rows = payload.get(row_field, [])
+            for row in rows:
+                row_prov = row.get("provenance")
+                if isinstance(row_prov, dict):
+                    row_prov["source_id"] = "stm32"
 
         # Per-family core fallback: some STM32 SVDs omit the <cpu>
         # element or name a CPU the cmsis-svd table doesn't resolve.

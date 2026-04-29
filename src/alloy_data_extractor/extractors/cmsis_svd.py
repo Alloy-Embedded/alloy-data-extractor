@@ -82,7 +82,24 @@ def _parse_int(text: str | None) -> int | None:
         return None
 
 
-def _peripheral_records(root: ET.Element) -> tuple[list[dict], list[dict]]:
+def _row_provenance(source_id: str, source_path: str) -> dict[str, Any]:
+    """The per-row provenance block stamped on every peripheral /
+    register / register-field row.  Matches the canonical YAML
+    convention (``source_id`` + ``source_path`` + ``patch_ids``).
+    """
+    return {
+        "source_id": source_id,
+        "source_path": source_path,
+        "patch_ids": [],
+    }
+
+
+def _peripheral_records(
+    root: ET.Element,
+    *,
+    source_id: str = "cmsis-svd",
+    source_path: str = "",
+) -> tuple[list[dict], list[dict]]:
     peripherals: list[dict] = []
     interrupts: list[dict] = []
     seen_irq_lines: set[int] = set()
@@ -101,6 +118,7 @@ def _peripheral_records(root: ET.Element) -> tuple[list[dict], list[dict]]:
                 "name": name,
                 "base_address": base,
                 "description": _findtext(peripheral, "description"),
+                "provenance": _row_provenance(source_id, source_path),
             }
         )
         for interrupt in peripheral.findall("interrupt"):
@@ -114,6 +132,7 @@ def _peripheral_records(root: ET.Element) -> tuple[list[dict], list[dict]]:
                     "line": line,
                     "peripheral": name,
                     "description": _findtext(interrupt, "description"),
+                    "provenance": _row_provenance(source_id, source_path),
                 }
             )
             seen_irq_lines.add(line)
@@ -266,12 +285,18 @@ def _expand_register_dim(register: ET.Element) -> list[dict[str, Any]]:
 
 def _register_and_field_records(
     root: ET.Element,
+    *,
+    source_id: str = "cmsis-svd",
+    source_path: str = "",
 ) -> tuple[list[dict], list[dict]]:
     """Project the SVD register tree into flat ``registers`` +
     ``register_fields`` lists.  Resolves ``derivedFrom`` (registers
     from a base peripheral propagate to the derived one) and
     inherits access/size from the parent peripheral when the
     register itself doesn't override them.
+
+    Each row carries an inline ``provenance`` block referencing
+    the supplied ``source_id`` / ``source_path``.
     """
     peripherals_node = root.find("peripherals")
     if peripherals_node is None:
@@ -337,6 +362,7 @@ def _register_and_field_records(
                         "offset_bytes": reg_offset,
                         "size_bits": reg_size,
                         "access": reg_access,
+                        "provenance": _row_provenance(source_id, source_path),
                     }
                 )
 
@@ -364,6 +390,7 @@ def _register_and_field_records(
                             "bit_offset": bit_offset,
                             "bit_width": bit_width,
                             "access": field_access,
+                            "provenance": _row_provenance(source_id, source_path),
                         }
                     )
 
@@ -402,8 +429,16 @@ def extract_device(
         raise FileNotFoundError(f"SVD file not found: {svd_path}")
     root = ET.parse(svd_path).getroot()
     core = _parse_cpu(root)
-    peripherals, interrupts = _peripheral_records(root)
-    registers, register_fields = _register_and_field_records(root)
+    # Per-row provenance carries the SVD basename — same convention
+    # the canonical YAML uses (e.g. ``STM32G071.svd`` rather than
+    # the absolute path that's environment-dependent).
+    row_source_path = svd_path.name
+    peripherals, interrupts = _peripheral_records(
+        root, source_id="cmsis-svd", source_path=row_source_path
+    )
+    registers, register_fields = _register_and_field_records(
+        root, source_id="cmsis-svd", source_path=row_source_path
+    )
 
     payload: dict[str, Any] = {
         "schema_version": schema_version,
