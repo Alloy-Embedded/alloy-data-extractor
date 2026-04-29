@@ -95,9 +95,11 @@ def _instance(ip_name: str, ip_version: str, instance_name: str) -> _ResolvedIns
 
 def test_project_tier_arrays_emits_per_target_field_rows() -> None:
     """Single USART instance projects into 4 target_fields with
-    the expected row counts."""
+    the expected row counts.  Each row carries
+    ``peripheral: USART1``."""
     arrays = _project_tier_arrays([_instance("USART", "sci3_v2_1_Cube", "USART1")])
     assert len(arrays["uart_data_bits_options"]) == 3
+    assert all(r["peripheral"] == "USART1" for r in arrays["uart_data_bits_options"])
     assert len(arrays["uart_parity_options"]) == 3
     assert len(arrays["uart_stop_bits_options"]) == 4
     assert len(arrays["uart_mode_flags"]) == 1
@@ -106,9 +108,12 @@ def test_project_tier_arrays_emits_per_target_field_rows() -> None:
     assert "timer_master_outputs" not in arrays
 
 
-def test_project_tier_arrays_dedups_same_ip_across_instances() -> None:
-    """USART1 + USART2 + USART3 all use sci3_v2_1_Cube — the
-    rows project once, not three times."""
+def test_project_tier_arrays_fans_out_per_instance() -> None:
+    """USART1 + USART2 + USART3 all use sci3_v2_1_Cube — each
+    contributes its own per-peripheral rows (3 instances × 3
+    data-bits rows = 9 rows total).  This matches the canonical
+    YAML shape — every tier row tagged with its peripheral
+    instance."""
     arrays = _project_tier_arrays(
         [
             _instance("USART", "sci3_v2_1_Cube", "USART1"),
@@ -116,24 +121,11 @@ def test_project_tier_arrays_dedups_same_ip_across_instances() -> None:
             _instance("USART", "sci3_v2_1_Cube", "USART3"),
         ]
     )
-    assert len(arrays["uart_data_bits_options"]) == 3
-    assert len(arrays["uart_parity_options"]) == 3
-
-
-def test_project_tier_arrays_unions_distinct_ip_versions() -> None:
-    """USART (sci3_v2) + LPUART (also sci3_v2) on the same chip
-    union into one row set.  Two different IPs both projecting
-    onto `pwm_alignment_options` would also union here."""
-    arrays = _project_tier_arrays(
-        [
-            _instance("USART", "sci3_v2_1_Cube", "USART1"),
-            # Hypothetical second IP version that also projects to
-            # the same target_field — our G0 tables don't trigger
-            # this, but the dedup logic supports it.
-        ]
-    )
-    # Single source — same as before.
-    assert len(arrays["uart_data_bits_options"]) == 3
+    assert len(arrays["uart_data_bits_options"]) == 9  # 3 × 3
+    instance_names = {r["peripheral"] for r in arrays["uart_data_bits_options"]}
+    assert instance_names == {"USART1", "USART2", "USART3"}
+    # Per-peripheral mode-flag row is also fanned out.
+    assert len(arrays["uart_mode_flags"]) == 3
 
 
 def test_project_tier_arrays_skips_unmapped_instances() -> None:
@@ -152,9 +144,9 @@ def test_project_tier_arrays_skips_unmapped_instances() -> None:
     assert all(k.startswith("uart_") for k in arrays)
 
 
-def test_project_tier_arrays_sorts_rows_by_raw_value() -> None:
-    """Rows SHALL be deterministically ordered for byte-stable
-    YAML output across runs."""
+def test_project_tier_arrays_sorts_rows_deterministically() -> None:
+    """Rows SHALL be deterministically ordered (by peripheral,
+    then field_value) for byte-stable YAML output across runs."""
     arrays_run1 = _project_tier_arrays(
         [_instance("USART", "sci3_v2_1_Cube", "USART1")]
     )
@@ -162,12 +154,14 @@ def test_project_tier_arrays_sorts_rows_by_raw_value() -> None:
         [_instance("USART", "sci3_v2_1_Cube", "USART1")]
     )
     assert arrays_run1 == arrays_run2
-    # spi_baud_prescaler raw_values should ascend.
+    # spi_baud_prescaler field_values should ascend per peripheral.
     spi_arrays = _project_tier_arrays(
         [_instance("SPI", "spi2s1_v3_3_Cube", "SPI1")]
     )
-    raw_values = [r["raw_value"] for r in spi_arrays["spi_baud_prescaler_options"]]
-    assert raw_values == sorted(raw_values)
+    field_values = [
+        r["field_value"] for r in spi_arrays["spi_baud_prescaler_options"]
+    ]
+    assert field_values == sorted(field_values)
 
 
 # ---------------------------------------------------------------------------
@@ -214,22 +208,34 @@ def test_extractor_payload_carries_18_tier_fields_for_g0(tmp_path: Path) -> None
     )
     payload = ext.extract(request).payload
 
-    # Sanity: ADC + USART + SPI + I2C + Timer + PWM all populated.
-    assert len(payload["adc_resolution_options"]) == 4
+    # Synthetic DB has 2 USARTs, 1 ADC, 1 SPI, 1 I2C, 2 TIMs
+    # (TIM1 advanced + TIM2 general-purpose).  Each instance
+    # contributes its own row set.
+    assert len(payload["adc_resolution_options"]) == 4  # 1 ADC × 4 rows
     assert len(payload["adc_sample_time_options"]) == 8
     assert len(payload["adc_oversampling_options"]) == 8
     assert len(payload["adc_external_triggers"]) == 7
-    assert len(payload["uart_data_bits_options"]) == 3
-    assert len(payload["uart_parity_options"]) == 3
-    assert len(payload["uart_stop_bits_options"]) == 4
-    assert len(payload["spi_baud_prescaler_options"]) == 8
+    assert len(payload["uart_data_bits_options"]) == 6  # 2 USARTs × 3 rows
+    assert len(payload["uart_parity_options"]) == 6
+    assert len(payload["uart_stop_bits_options"]) == 8
+    assert len(payload["uart_mode_flags"]) == 2  # one row per USART instance
+    assert len(payload["spi_baud_prescaler_options"]) == 8  # 1 SPI × 8 rows
+    assert len(payload["spi_mode_flags"]) == 1
     assert len(payload["i2c_mode_flags"]) == 1
-    assert len(payload["timer_prescaler_options"]) == 17
-    assert len(payload["timer_trigger_sources"]) == 8
-    assert len(payload["timer_master_outputs"]) == 8
-    assert len(payload["pwm_alignment_options"]) == 4
+    assert len(payload["timer_prescaler_options"]) == 2  # one row per TIM
+    assert len(payload["timer_trigger_sources"]) == 16  # 2 TIMs × 8 rows
+    assert len(payload["timer_master_outputs"]) == 16
+    assert len(payload["timer_mode_flags"]) == 2
+    assert len(payload["pwm_alignment_options"]) == 8  # 2 TIMs × 4 rows
+    # TIM1 advanced (BKIN+BKIN2) + TIM2 GP (no BDTR) = 2 rows
     assert len(payload["pwm_break_inputs"]) == 2
-    assert len(payload["pwm_deadtime_options"]) == 4
+    assert len(payload["pwm_deadtime_options"]) == 4  # only TIM1 (advanced)
+    assert len(payload["pwm_mode_flags"]) == 2
+
+    # Per-row peripheral tagging matches canonical shape.
+    usart_rows = payload["uart_data_bits_options"]
+    instances_used = {r["peripheral"] for r in usart_rows}
+    assert instances_used == {"USART1", "USART2"}
 
     # Resolution log surfaces unmapped IPs.
     res = payload["stm32_tier_resolution"]

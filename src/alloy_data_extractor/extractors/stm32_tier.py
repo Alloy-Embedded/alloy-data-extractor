@@ -66,73 +66,45 @@ class _ResolvedInstance:
     mapping: TierMapping | None
 
 
-def _row_dedup_key(target_field: str, row: dict[str, Any]) -> tuple[Any, ...]:
-    """Return a tuple identifying the row for cross-instance
-    deduplication.  When two instances on the same chip
-    contribute identical rows for the same target_field, we
-    keep one — but distinct rows union deterministically.
-    """
-    # Fields that pair (semantic, raw) values use ``raw_value`` /
-    # ``raw_m0`` etc as the discriminator; mode-flag rows are
-    # full-dict-equality.
-    if target_field in {
-        "adc_resolution_options",
-        "adc_sample_time_options",
-        "adc_oversampling_options",
-        "adc_external_triggers",
-        "uart_stop_bits_options",
-        "spi_baud_prescaler_options",
-        "timer_prescaler_options",
-        "timer_trigger_sources",
-        "timer_master_outputs",
-        "pwm_alignment_options",
-        "pwm_break_inputs",
-    }:
-        return (target_field, row.get("raw_value"))
-    if target_field == "uart_data_bits_options":
-        return (target_field, row.get("value_bits"))
-    if target_field == "uart_parity_options":
-        return (target_field, row.get("parity"))
-    if target_field == "pwm_deadtime_options":
-        return (target_field, row.get("range"))
-    # Mode-flag rows: hash on sorted key/value items.
-    return (target_field, tuple(sorted(row.items())))
-
-
 def _project_tier_arrays(
     instances: list[_ResolvedInstance],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Walk every resolved instance, apply its mapping, and
-    union the projected rows by ``target_field``.
+    """Walk every resolved instance, fan its TierMapping
+    projections out per-peripheral, and concatenate the rows by
+    ``target_field``.
 
-    When two distinct IP versions on the same chip both project
-    onto the same ``target_field`` (e.g. F4 has both
-    `adv_timer_v1` and `gp_timer_v1` and both project
-    ``pwm_alignment_options``), the union takes the SUPERSET
-    deterministically.  Consumers that need to gate per-instance
-    can re-derive from the chip's register tree.
+    Each row already carries ``peripheral: <instance_name>`` from
+    the projection function — so two USART instances contribute
+    independent rows tagged with their own names.  Cross-instance
+    deduplication is **not** applied: the canonical YAML's
+    tier arrays are per-peripheral.
+
+    Final ordering: ``(peripheral, field_value, …)`` for byte-
+    stable YAML output across runs.
     """
-    aggregated: dict[str, dict[tuple[Any, ...], dict[str, Any]]] = defaultdict(dict)
+    aggregated: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for instance in instances:
         if instance.mapping is None:
             continue
         for projection in instance.mapping.projections:
-            for row in projection.rows:
-                key = _row_dedup_key(projection.target_field, row)
-                aggregated[projection.target_field].setdefault(key, dict(row))
+            rows = projection.project(instance.instance_name)
+            aggregated[projection.target_field].extend(rows)
 
     out: dict[str, list[dict[str, Any]]] = {}
-    for target_field, by_key in aggregated.items():
-        rows = list(by_key.values())
-        # Deterministic ordering — sort by raw_value when present,
-        # else by the dict's first key.
+    for target_field, rows in aggregated.items():
+        # Deterministic order: peripheral name → primary
+        # discriminator (field_value / extsel_value / etc) →
+        # full row repr as tiebreaker.
         rows.sort(
             key=lambda r: (
-                r.get("raw_value", 0),
-                r.get("raw_m0", 0),
-                r.get("raw_m1", 0),
-                r.get("raw_pce", 0),
-                r.get("raw_ps", 0),
+                r.get("peripheral", ""),
+                r.get("field_value", 0),
+                r.get("extsel_value", 0),
+                r.get("m0_value", 0),
+                r.get("m1_value", 0),
+                r.get("pce_value", 0),
+                r.get("ps_value", 0),
+                r.get("prescaler_field_value", 0),
                 str(r),
             )
         )

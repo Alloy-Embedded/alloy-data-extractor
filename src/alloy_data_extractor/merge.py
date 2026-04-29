@@ -107,7 +107,9 @@ STM32_MERGE_POLICY = MergePolicy(
         "uart_stop_bits_options": ("stm32-tier",),
         "uart_mode_flags": ("stm32-tier",),
         "spi_baud_prescaler_options": ("stm32-tier",),
+        "spi_mode_flags": ("stm32-tier",),
         "i2c_mode_flags": ("stm32-tier",),
+        "i2c_speed_options": ("stm32-tier", "stm32-overlay"),
         "timer_prescaler_options": ("stm32-tier",),
         "timer_trigger_sources": ("stm32-tier",),
         "timer_master_outputs": ("stm32-tier",),
@@ -125,7 +127,6 @@ STM32_MERGE_POLICY = MergePolicy(
         "adc_internal_channels": ("stm32-overlay",),
         "adc_max_clock_hz": ("stm32-overlay",),
         "uart_max_baud_hz": ("stm32-overlay",),
-        "i2c_speed_options": ("stm32-overlay",),
         "i2c_max_clock_hz": ("stm32-overlay",),
         "system_clock_profiles": ("stm32-overlay",),
         # Phase 6: I2C TIMINGR presets — computed from
