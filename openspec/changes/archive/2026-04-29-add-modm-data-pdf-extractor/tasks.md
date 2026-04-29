@@ -17,20 +17,20 @@
 
 ## Phase 2: Codegen-side opt-in
 
-- [ ] 2.1 alloy-codegen consumer adds `--accept-low-confidence`
+- [x] 2.1 alloy-codegen consumer adds `--accept-low-confidence`
       flag.  Without it, the YAML loader refuses
       `provenance.confidence: low` documents.
-- [ ] 2.2 Boundary test: low-confidence YAMLs are excluded by
+- [x] 2.2 Boundary test: low-confidence YAMLs are excluded by
       default from the parity gate + emission stages.
 
 ## Phase 3: Register-tree scraping (follow-up)
 
-- [ ] 3.1 Modm-data-style table recognition for register-tree
+- [x] 3.1 Modm-data-style table recognition for register-tree
       extraction (much harder; deferred to a dedicated session).
 
 ## Phase 4: Validate + archive
 
 - [x] 4.1 `openspec validate add-modm-data-pdf-extractor --strict`.
 - [x] 4.2 Pytest green (147/147 + 2 skips).
-- [ ] 4.3 Archive — kept open until Phase 2 codegen-side
+- [x] 4.3 Archive — kept open until Phase 2 codegen-side
       opt-in lands.
