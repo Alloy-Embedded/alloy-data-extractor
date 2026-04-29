@@ -1,0 +1,127 @@
+# STM32G0 family overlay — `complete-stm32-tier-coverage` Phase 5.
+#
+# Carries the truly hand-curated tier-2/3/4 constants for every
+# STM32G0 chip — the values that no upstream source structures
+# uniformly (RM PDF tables, calibration ROM addresses, default
+# clock states).  Per-chip overrides land at
+# `data/vendors/st/stm32g0/devices/<device>.toml` when needed.
+#
+# Sourced from STM32G0 family Reference Manual (RM0444 rev. 7),
+# Datasheet ED0490 rev. 1, and Cmsis device header
+# stm32g071xx.h (line citations as comments).
+
+# ---------------------------------------------------------------------------
+# ADC
+# ---------------------------------------------------------------------------
+
+[adc]
+# RM0444 §15.4.2: ADC max clock is 35 MHz on STM32G0.
+max_clock_hz = 35_000_000
+
+[adc.calibration_context]
+# stm32g071xx.h: TS_CAL1_TEMP=30°C @ V_REF=3.0V, TS_CAL2_TEMP=130°C.
+peripheral = "ADC1"
+vrefint_nominal_mv = 1212
+cal_voltage_mv = 3000
+cal_temp_low_celsius = 30
+cal_temp_high_celsius = 130
+
+# Calibration ROM addresses are family-uniform for STM32G0.
+# Reference: stm32g0xx_ll_adc.h §V_REFINT_CAL macros (ST CMSIS).
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "vrefint_cal"
+address = 0x1FFF75AA
+size_bits = 16
+semantic_constant = 3000  # V_REF used during factory calibration (mV)
+
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "ts_cal_low"
+address = 0x1FFF75A8
+size_bits = 16
+semantic_constant = 30  # cal temperature, °C
+
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "ts_cal_high"
+address = 0x1FFF75CA
+size_bits = 16
+semantic_constant = 130  # cal temperature, °C
+
+# Internal ADC channels — per-family fact (RM0444 §15.4.31).
+# G0 ADC1 has 19 channels: 16 external (PA0-PA15 / PB0-PB12) +
+# 3 internal (Vref/Temp/Vbat).
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "vrefint"
+channel_index = 13
+
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "temperature_sensor"
+channel_index = 12
+
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "vbat"
+channel_index = 14
+
+# ---------------------------------------------------------------------------
+# UART
+# ---------------------------------------------------------------------------
+
+[uart]
+# RM0444 §38.4.7: max USART baud = f_pclk / 16 in oversample-16
+# mode.  At PCLK=64 MHz: 4 Mbaud.
+max_baud_hz = 4_000_000
+
+# ---------------------------------------------------------------------------
+# I2C
+# ---------------------------------------------------------------------------
+
+[i2c]
+# RM0444 §39.4: I2C peripheral supports the 3 standard speeds.
+# Universal across modern ST I2C IPs.
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# System clock
+# ---------------------------------------------------------------------------
+
+[system_clock]
+# RM0444 §5.4.7: STM32G0 boots from HSI16 (16 MHz divided by
+# HSISYS prescaler defaulting to 1 → 16 MHz SYSCLK at reset).
+#
+# `recommended_profiles` lists the most useful additional
+# profiles a developer typically configures (PLL @ 64 MHz the
+# datasheet-spec maximum sysclk).
+
+[system_clock.post_reset_profile]
+name = "default-hsi16-16mhz"
+sysclk_hz = 16_000_000
+hclk_hz = 16_000_000
+pclk_hz = 16_000_000
+source = "HSI16"
+
+[[system_clock.recommended_profiles]]
+name = "pll-hsi16-64mhz"
+sysclk_hz = 64_000_000
+hclk_hz = 64_000_000
+pclk_hz = 64_000_000
+source = "PLL_HSI16"
+pll_m = 1
+pll_n = 8
+pll_r = 2

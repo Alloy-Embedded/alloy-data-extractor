@@ -116,6 +116,22 @@ STM32_MERGE_POLICY = MergePolicy(
         "pwm_break_inputs": ("stm32-tier",),
         "pwm_deadtime_options": ("stm32-tier",),
         "pwm_mode_flags": ("stm32-tier",),
+        # Family-overlay TOML (Phase 5) — RM-table constants +
+        # calibration ROM addresses + internal channel maps +
+        # default system-clock profiles.  Authoritative for the
+        # truly-hand-curated tier-2 fields.
+        "adc_calibration_context": ("stm32-overlay",),
+        "adc_calibration_data_points": ("stm32-overlay",),
+        "adc_internal_channels": ("stm32-overlay",),
+        "adc_max_clock_hz": ("stm32-overlay",),
+        "uart_max_baud_hz": ("stm32-overlay",),
+        "i2c_speed_options": ("stm32-overlay",),
+        "i2c_max_clock_hz": ("stm32-overlay",),
+        "system_clock_profiles": ("stm32-overlay",),
+        # Phase 6: I2C TIMINGR presets — computed from
+        # (i2c.speed_options × system_clock_profiles) by the
+        # overlay extractor.
+        "i2c_timing_presets": ("stm32-overlay",),
     },
 )
 

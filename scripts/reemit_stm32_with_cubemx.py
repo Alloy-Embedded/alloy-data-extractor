@@ -112,10 +112,26 @@ def main() -> int:
     )
     print(f"tier     {args.device}: {tier_field_count} tier-2/3/4 fields populated")
 
+    # stm32-overlay enrichment (family TOML constants + I2C timing).
+    overlay_ext = resolve_extractor_by_id("stm32-overlay")
+    overlay = overlay_ext.extract(
+        ExtractionRequest(
+            vendor=args.vendor,
+            family=args.family,
+            device=args.device,
+            source_paths={},
+            revision=args.revision,
+        )
+    )
+    overlay_field_count = sum(
+        1 for k in overlay.payload if k not in {"schema_version", "identity", "provenance"}
+    )
+    print(f"overlay  {args.device}: {overlay_field_count} family-overlay fields")
+
     # Merge.
     merged = merge_payloads(
         primary=primary.payload,
-        enrichments=(cubemx.payload, tier.payload),
+        enrichments=(cubemx.payload, tier.payload, overlay.payload),
         policy=STM32_MERGE_POLICY,
     )
     print(

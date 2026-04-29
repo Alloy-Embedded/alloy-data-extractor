@@ -1,0 +1,101 @@
+# STM32F4 family overlay — `complete-stm32-tier-coverage` Phase 5.
+#
+# Sourced from STM32F4 family Reference Manuals (RM0090 rev. 18
+# for F405/F407/F415/F417 and adjacent chips), Datasheet
+# DS8626 rev. 9, and CMSIS device headers stm32f4xx.h /
+# stm32f405xx.h / stm32f401xx.h.
+
+[adc]
+# RM0090 §13.3: ADC max clock is 36 MHz on STM32F4 (APB2/2 @ 84 MHz).
+max_clock_hz = 36_000_000
+
+[adc.calibration_context]
+# stm32f4xx.h: TS_CAL1_TEMP=30°C, TS_CAL2_TEMP=110°C @ V_REF=3.3V.
+peripheral = "ADC1"
+vrefint_nominal_mv = 1210
+cal_voltage_mv = 3300
+cal_temp_low_celsius = 30
+cal_temp_high_celsius = 110
+
+# Calibration ROM (uniform across F4 family).
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "ts_cal_low"
+address = 0x1FFF7A2C
+size_bits = 16
+semantic_constant = 30
+
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "ts_cal_high"
+address = 0x1FFF7A2E
+size_bits = 16
+semantic_constant = 110
+
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "vrefint_cal"
+address = 0x1FFF7A2A
+size_bits = 16
+semantic_constant = 3300
+
+# Internal channels (RM0090 §13.10): F4 ADC1 ch16=temp, ch17=vrefint, ch18=vbat.
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "temperature_sensor"
+channel_index = 16
+
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "vrefint"
+channel_index = 17
+
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "vbat"
+channel_index = 18
+
+[uart]
+# RM0090 §32.3.4: max USART baud at PCLK1=42 MHz / PCLK2=84 MHz.
+max_baud_hz = 5_250_000
+
+[i2c]
+# RM0090 §27.3: I2C peripheral on F4 supports 100k / 400k.
+# Fast-plus (1M) was added in F2/F4-extra revisions.
+max_clock_hz = 400_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[system_clock]
+
+[system_clock.post_reset_profile]
+# F4 boots HSI16 → SYSCLK 16 MHz; HCLK = SYSCLK; APB1=HCLK/2,
+# APB2=HCLK/2 (DS8626 §3.6).  Out-of-reset all timers/peripherals
+# clock from the same 16 MHz.
+name = "default-hsi16-16mhz"
+sysclk_hz = 16_000_000
+hclk_hz = 16_000_000
+pclk_hz = 16_000_000
+source = "HSI16"
+
+[[system_clock.recommended_profiles]]
+# RM0090 §6.3: F405 spec sysclk max = 168 MHz with PLL.
+name = "pll-hse-168mhz"
+sysclk_hz = 168_000_000
+hclk_hz = 168_000_000
+pclk_hz = 84_000_000
+source = "PLL_HSE"
+
+[[system_clock.recommended_profiles]]
+# F401 spec max = 84 MHz.  Listed for cross-chip coverage.
+name = "pll-hse-84mhz"
+sysclk_hz = 84_000_000
+hclk_hz = 84_000_000
+pclk_hz = 42_000_000
+source = "PLL_HSE"

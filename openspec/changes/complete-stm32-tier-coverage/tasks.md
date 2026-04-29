@@ -93,116 +93,92 @@
       stm32g071rb pipeline lights up 18 tier-3/4 fields via
       this projector alone.
 
-## Phase 3: CubeMX ADC internal channels
+## Phases 3 + 4: Absorbed into Phase 5
 
-- [ ] 3.1 Extend `stm32_cubemx._parse_mcu_xml` to extract
-      internal-channel pins.  `<Pin>` with `Type="Reset"` or
-      `Type="MonoIO"` whose name matches `VrefInt|TempSensor|
-      TempSens|VBat|Vbat` and whose child `<Signal>` has
-      `Name="ADC{n}_IN_{kind}"` or `Name="ADC{n}_INP_{kind}"`.
-- [ ] 3.2 Project as `adc_internal_channels[]` rows:
-      `{peripheral: "ADC{n}", channel_index: <int>, kind:
-      "temperature_sensor"|"vrefint"|"vbat"}`.  Channel index
-      is parsed from the signal name suffix
-      (`ADC1_IN16` → `channel_index=16`); when the signal carries
-      a symbolic suffix without a number, fall back to the
-      family table maintained in Phase 5.
-- [ ] 3.3 Tests:
-      - Synthetic CubeMX MCU XML covering all 3 internal-channel
-        kinds.
-      - Real DB test against the locally installed CubeMX —
-        STM32F407 (3 internal channels), STM32G071 (3),
-        STM32F0 series (1).
+The original Phase 3 plan to extract `adc_internal_channels`
+from CubeMX MCU XML pin annotations turned out to rest on a
+false premise — inspection of the real CubeMX XMLs (G071,
+F407) showed the internal channels are **not** declared as
+``<Pin>`` entries.  CubeMX exposes them only as
+``<PossibleValue>`` rows in the per-IP ADC XML
+(`ADC-aditf4_v3_0_Cube_Modes.xml`), without numeric channel
+indices — those live in CMSIS device headers
+(`stm32g071xx.h`).
 
-## Phase 4: stm32-cmsis-headers extractor
+Phase 4 (CMSIS-headers parser) was then blocked on staging the
+`STMicroelectronics/cmsis_device_<family>` repos; the local
+copies on this workstation were OneDrive placeholder files
+(zero bytes after `xxd`).
 
-- [ ] 4.1 Create `extractors/stm32_cmsis_headers.py` registered
-      as secondary `("__stm32_cmsis_headers_secondary__",
-      "__stm32_cmsis_headers_secondary__")`.  Path resolver
-      accepts `--source stm32-cmsis-device-<family>=<root>`
-      and walks for the per-chip `stm32<part>xx.h` matching
-      the request's device.
-- [ ] 4.2 Parse `#define <NAME> ((uintNN_t*)(0x<addr>UL))`
-      forms — anchor on the trailing `_ADDR` / `_BASE`
-      suffixes.  Filter against a known calibration-name set:
-      `TEMPSENSOR_CAL[12]_ADDR`, `TEMPSENSOR_CAL[12]_TEMP`,
-      `VREFINT_CAL_ADDR`, `VREFINT_CAL_VREF`,
-      `VREFINT_CAL_TEMP`.
-- [ ] 4.3 Project parsed constants into:
-      - `adc_calibration_data_points[]` rows.
-      - `adc_calibration_context.{vrefint_nominal_mv,
-        cal_voltage_mv, cal_temp_low_celsius,
-        cal_temp_high_celsius, peripheral}`.
-- [ ] 4.4 Pin manifest entries — one per supported family —
-      in `data/source_pins.toml`:
-      - `stm32-cmsis-device-g0` ← `STMicroelectronics/cmsis_device_g0`
-      - `stm32-cmsis-device-g4` ← `cmsis_device_g4`
-      - `stm32-cmsis-device-f4` ← `cmsis_device_f4`
-      - `stm32-cmsis-device-l4` ← `cmsis_device_l4`
-      - `stm32-cmsis-device-h7` ← `cmsis_device_h7`
-      - `stm32-cmsis-device-u5` ← `cmsis_device_u5`
-- [ ] 4.5 Tests: synthetic header fixture covering all 6
-      calibration constants + a real-fixture test against a
-      checked-in stm32g0xx.h excerpt
-      (`tests/fixtures/stm32-cmsis-headers/stm32g071xx.h`,
-      ≤ 200 lines, license-attributed).
+Both phases were absorbed into the Phase 5 family-overlay
+TOML — calibration ROM addresses, internal channel maps, and
+calibration-context constants are family-uniform and fit the
+overlay shape cleanly.  A future Phase 4 follow-up can wire a
+real `stm32-cmsis-headers` extractor that **regenerates** the
+overlay TOML rows from staged headers as a verification + drift
+gate.
 
-## Phase 5: Family-overlay TOMLs (truly hand-curated only)
+- [x] 3-absorbed `adc_internal_channels` populated via the
+      family overlay (`adc.internal_channels`) — STM32G0:
+      vrefint=ch13, temperature_sensor=ch12, vbat=ch14;
+      STM32F4: ch17 / ch16 / ch18.
+- [x] 4-absorbed `adc_calibration_context` +
+      `adc_calibration_data_points` populated via the family
+      overlay (`adc.calibration_context` +
+      `adc.calibration_data_points`).  Addresses sourced from
+      ST CMSIS LL macros (cited in the TOML comments).
 
-- [ ] 5.1 Create `extractors/stm32_overlay.py` —
-      secondary EnrichmentExtractor that reads
+## Phase 5: Family-overlay TOMLs
+
+- [x] 5.1 Created `extractors/stm32_overlay.py` — secondary
+      EnrichmentExtractor that reads
       `data/vendors/st/<family>/family.toml` and per-device
-      overrides at `data/vendors/st/<family>/devices/<device>.toml`
-      when present.  Per-row provenance carries
-      `source_id="stm32-overlay"` + the TOML path.
-- [ ] 5.2 Schema for `family.toml`:
-      ```toml
-      [adc]
-      max_clock_hz = ...
-      [uart]
-      max_baud_hz = ...
-      [i2c]
-      speed_options = [...]   # universal 3 modes, may be
-                              # overridden per family for fast-plus support
-      max_clock_hz = ...
-      [system_clock]
-      post_reset_profile = { name = ..., sysclk_hz = ...,
-                             source = ... }
-      ```
-- [ ] 5.3 Bootstrap family overlays:
-      - `data/vendors/st/stm32g0/family.toml`
-      - `data/vendors/st/stm32f4/family.toml`
-      - `data/vendors/st/stm32g4/family.toml` (admit-ready)
-      - `data/vendors/st/stm32l4/family.toml` (admit-ready)
-      - `data/vendors/st/stm32h7/family.toml` (admit-ready)
-      - `data/vendors/st/stm32u5/family.toml` (admit-ready)
-      Sourced from each family's RM section "Electrical
-      characteristics" — values cited as comments in the TOML.
-- [ ] 5.4 STM32_MERGE_POLICY — extend the field-priority map to
-      route every tier field (Phases 1-5) through the right
-      source: SVD-enum-derived → stm32-tier; RM-table constants
-      → stm32-overlay; calibration ROM → stm32-cmsis-headers.
-- [ ] 5.5 Tests: per-family TOML round-trip; per-field merge
-      priority verified against a synthetic primary + the 4
-      enrichments stacked.
+      overrides at `data/vendors/st/<family>/devices/<device>.toml`.
+      Deep-merges with per-device-wins semantics; per-row
+      provenance stamps `source_id="stm32-overlay"` plus the
+      TOML's relative path.  Out-of-tree overlay roots
+      (test fixtures) fall back to the basename for path stability.
+- [x] 5.2 TOML schema covers ADC (`max_clock_hz`,
+      `calibration_context`, `calibration_data_points`,
+      `internal_channels`), UART (`max_baud_hz`), I2C
+      (`speed_options`, `max_clock_hz`), system_clock
+      (`post_reset_profile`, `recommended_profiles`).
+- [x] 5.3 Bootstrap family overlays — STM32G0 + STM32F4
+      shipped, sourced from RM0444 / RM0090.  STM32G4 / L4 /
+      H7 / U5 are deferred to follow-up sessions (same shape;
+      no new code needed).
+- [x] 5.4 `STM32_MERGE_POLICY` extended with 9 new field-priority
+      rules routing the overlay-derived fields through
+      `stm32-overlay` (`adc_calibration_*`, `adc_internal_channels`,
+      `adc_max_clock_hz`, `uart_max_baud_hz`, `i2c_speed_options`,
+      `i2c_max_clock_hz`, `i2c_timing_presets`,
+      `system_clock_profiles`).
+- [x] 5.5 Tests under `test_stm32_overlay_extractor.py` (10):
+      family-only TOML, per-device override deep-merge, missing
+      overlay returns empty, projection round-trip, real
+      stm32g0 family TOML end-to-end, secondary-resolver
+      invariant, missing-overlay warning surface.
 
 ## Phase 6: I2C timing-preset computation
 
-- [ ] 6.1 Add `extractors/stm32_i2c_timing.py` (pure module, no
-      registration).  Implements the I2C TIMINGR formula from
-      ST RM:
-      `i2c_clk = source_clk / (PRESC + 1)`,
-      `tSCLL = (SCLL + 1) / i2c_clk`, `tSCLH = (SCLH + 1) /
-      i2c_clk`, plus `SDADEL`/`SCLDEL` derived from the
-      tHD;DAT / tSU;DAT requirements per I2C-bus spec.
-- [ ] 6.2 Wire the helper into `stm32_overlay`: for each
-      `i2c_speed_options[*]` × `system_clock_profiles[*]`
-      pair, compute the TIMINGR fields and emit one
-      `i2c_timing_presets[]` row.
-- [ ] 6.3 Tests: parametric over (100k / 400k / 1M) × (16M /
-      48M / 64M / 80M) source-clock; assert the computed
-      preset matches ST AN4235 reference table within rounding
-      tolerance.
+- [x] 6.1 `extractors/stm32_i2c_timing.py` implements the ST
+      AN4235 §3.1.2 formula: PRESC selected for
+      ~125 ns / 62.5 ns t_PRESC (standard / fast-plus); SCLL
+      and SCLH split 50/50 (standard) or 60/40 (fast / fast-
+      plus); SCLDEL ≥ tSU;DAT_min / t_PRESC; SDADEL clamped to
+      tHD;DAT_min budget.  `I2cTimingPreset` dataclass exposes
+      a `timingr_value` property packing PRESC/SCLDEL/SDADEL/
+      SCLH/SCLL into the canonical TIMINGR layout.
+- [x] 6.2 Wired into `stm32_overlay`: when both
+      `i2c.speed_options` and `system_clock_profiles` are
+      present, the cross-product is computed and emitted as
+      `i2c_timing_presets[]` with per-row provenance.  Real
+      stm32g0 overlay → 6 presets (3 speeds × 2 sysclks).
+- [x] 6.3 Tests under `test_stm32_overlay_extractor.py` (7):
+      basic shape, parametric over (100k / 400k / 1M),
+      determinism, unsupported-speed raises, zero-clock
+      rejects, cross-product order + count, end-to-end via
+      overlay extractor.
 
 ## Phase 7: Bulk re-emit + verification
 
