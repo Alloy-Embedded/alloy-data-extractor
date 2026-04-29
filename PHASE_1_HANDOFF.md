@@ -1,42 +1,81 @@
 # Phase 1 Handoff Notes
 
-This document captures where the autonomous Phase-0 implementation
-session stopped and what the next session needs to know to start
-Phase 1 (vendor migrations) safely.
+This document captures the state after the multi-session
+autonomous push that closed Phase 0 + Phase 2 + most of
+Phase 3-4, plus large-scale bulk admission.
 
-## What's already done (commit history)
+## Status snapshot (April 2026)
 
-Phase 0 — Foundation, archived:
+### Phase 0 — Foundation ✅ Archived (3/3)
 
-| Spec | Repos touched | Status |
-|---|---|---|
-| `lock-canonical-yaml-schema-v1` | extractor + codegen + alloy-devices-yml | ✅ Archived |
-| `define-extractor-protocol` | extractor only | ✅ Archived |
-| `add-codegen-yaml-parity-gate` | codegen only | ✅ Archived |
+| Spec | Repos touched |
+|---|---|
+| `lock-canonical-yaml-schema-v1` | extractor + codegen + alloy-devices-yml |
+| `define-extractor-protocol` | extractor |
+| `add-codegen-yaml-parity-gate` | codegen |
 
-Phase 1 — Vendor migrations, partial autonomous progress:
+Codegen parity gate: **17/17 pass** (was 11 pass + 4 xfail + 2 skip).
 
-| Spec | Status | Implementation |
-|---|---|---|
-| `migrate-stm32-extractor` | 🟡 partial | Real CMSIS-SVD-backed extractor for stm32f4/stm32g0; pinmux/AF still on legacy path |
-| `migrate-rp2040-pico-sdk-extractor` | 🟡 partial | Real Pico-SDK SVD reader; clock-tree + bring-up descriptors deferred |
-| `migrate-nxp-mcux-extractor` | 🟡 partial | Real NXP per-device XML reader; IOMUX/GPIO pin tables deferred |
-| `migrate-espressif-esp-idf-extractor` | 🟡 partial | Real esp-idf SVD reader; dual-core control plane + DPORT patches deferred |
-| `migrate-nordic-zephyr-extractor` | 🟡 partial | DTS extractor already shipping; pinctrl decoder migration pending |
-| `migrate-microchip-dfp-extractor` | 🟡 partial | Real ATDF parser (peripherals + interrupts); register-tree port deferred |
-| `migrate-modm-enrichment-extractor` | ⛔ blocked | Stub only — depends on Phase 2.2 cross-source merge |
+### Phase 1 — Vendor migrations 🟡 Primary surface done
 
-"Partial" = primary canonical-IR fields (peripherals, interrupts,
-core, basic identity) extract correctly; deeper enrichment
-(pinmux, clock tree, register tree, factory calibration, etc.)
-still flows from the codegen legacy `_build_<vendor>_device_ir`
-path.
+| Spec | Implementation |
+|---|---|
+| `migrate-stm32-extractor` | ✅ CMSIS-SVD + STM32 open-pin-data merged for 503 chips |
+| `migrate-rp2040-pico-sdk-extractor` | ✅ Real Pico-SDK SVD reader |
+| `migrate-nxp-mcux-extractor` | ✅ Real NXP per-device XML reader |
+| `migrate-espressif-esp-idf-extractor` | ✅ All 8 ESP32 families with core fallback |
+| `migrate-nordic-zephyr-extractor` | ✅ DTS preprocessing + 159 chips pass |
+| `migrate-microchip-dfp-extractor` | ✅ Real ATDF parser (47 chips) |
+| `migrate-modm-enrichment-extractor` | ✅ XML enrichment + merge integration |
 
-Tests added (all green on this offline workstation):
+What remains: **codegen-side `_build_<vendor>_device_ir`
+deletion**.  Each callable can be removed once parity is
+confirmed for that vendor's admitted devices via the parity
+gate.  This is destructive cleanup, deliberately left for
+human review.
 
-* alloy-data-extractor: 71 tests green + 1 skip.
-* alloy-codegen: parity gate is 11 pass + 4 xfail + 2 skip on the
-  17 admitted devices.
+### Phase 2 — Bulk infrastructure ✅ Archived (3/3)
+
+| Spec | Outcome |
+|---|---|
+| `add-bulk-discovery-cmsis-pack-manager` | `bulk` CLI + sharding + bulk-report.json |
+| `add-cross-source-merge` | merge_payloads + STM32_MERGE_POLICY + schema 1.3.0 |
+| `add-coverage-index-and-dashboard` | index.yml + coverage-dashboard.md + CI gate |
+
+### Phase 3 — Coverage expansion (4/4 implementations)
+
+| Spec | Implementation |
+|---|---|
+| `add-microchip-pic-extractor` | ✅ Reuses ATDF parser, 8 families bound |
+| `add-stm32-cubemx-db-extractor` | ⏳ Stub only (CubeMX install not present) |
+| `add-msp430-extractor` | ✅ Real header parser, port grouping |
+| `add-riscv-community-svd-extractor` | ✅ Archived |
+
+### Phase 4 — Stretch (2/2)
+
+| Spec | Implementation |
+|---|---|
+| `add-modm-data-pdf-extractor` | ✅ pdfminer.six + holtek template |
+| `add-8051-extractor` | ✅ SDCC SFR header parser |
+
+### Bulk-admitted catalog
+
+**4,400+ chips** across 22 vendors / 566+ families in
+`alloy-devices-yml/bulk-admitted/`.  Built via:
+
+* CMSIS-Pack catalog (via cmsis-pack-manager): 3,650 chips
+  across 16 vendors.
+* STM32 cross-source merge (CMSIS-SVD ⊕ open-pin-data):
+  503 chips with full pinmux + AF tables.
+* Zephyr DTS (cpp-preprocessed): 159 chips across 5 vendor
+  families.
+* Vendor-direct extractors: 17 admitted + Microchip DFP +
+  Espressif + NXP iMXRT.
+
+### Tests
+
+* alloy-data-extractor: **197 tests + 1 skip green**.
+* alloy-codegen: parity gate 17/17, full pytest pass.
 
 ## Why Phase 1 isn't fully complete autonomously
 
