@@ -310,21 +310,42 @@ class CmsisPackBulkExtractor:
         payload["identity"] = identity
 
         # Memories: pull flash + sram regions from the catalog
-        # record's `memories` block.
+        # record's `memories` block.  Kind classification uses
+        # name heuristics + the access bits CMSIS-Pack provides
+        # (rom is read-only-execute; ram is read-write).
         memories: list[dict[str, Any]] = []
         for name, info in (record.get("memories") or {}).items():
             try:
+                lower_name = str(name).lower()
+                access = info.get("access", {}) if isinstance(info, dict) else {}
+                is_writable = bool(access.get("write"))
+                is_executable = bool(access.get("execute"))
+                if "flash" in lower_name or "rom" in lower_name:
+                    kind = "flash"
+                elif "ram" in lower_name:
+                    kind = "sram"
+                elif is_executable and not is_writable:
+                    # Cortex-M flash region by capability.
+                    kind = "flash"
+                elif is_writable and is_executable:
+                    kind = "sram"
+                else:
+                    kind = "memory"
+                # Access string follows the alloy convention: r/w/x.
+                access_chars = ""
+                if access.get("read"):
+                    access_chars += "r"
+                if is_writable:
+                    access_chars += "w"
+                if is_executable:
+                    access_chars += "x"
                 memories.append(
                     {
-                        "name": str(name).lower(),
-                        "kind": (
-                            "flash"
-                            if "flash" in str(name).lower()
-                            else ("sram" if "ram" in str(name).lower() else "memory")
-                        ),
+                        "name": lower_name,
+                        "kind": kind,
                         "base_address": int(info.get("start", 0)),
                         "size_bytes": int(info.get("size", 0)),
-                        "access": "rwx" if info.get("access", {}).get("execute") else "rw",
+                        "access": access_chars or "rw",
                     }
                 )
             except (TypeError, ValueError):
