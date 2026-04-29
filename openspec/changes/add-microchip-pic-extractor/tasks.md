@@ -15,12 +15,27 @@
 - [x] 1.4 Per-family fallback core when ATDF omits the
       architecture attribute.
 
-## Phase 2: Per-arch IR projection (deferred)
+## Phase 2: Per-arch IR projection
 
-- [ ] 2.1 PIC8/16/18 banked-memory layout (Harvard 8-bit).
-- [ ] 2.2 PIC24 + dsPIC33 indirect-addressing nuances.
-- [ ] 2.3 dsPIC33 DSP-related SFR carve-outs.
-- [ ] 2.4 PIC32 MIPS register carve-outs (CP0 separation).
+- [x] 2.1 PIC8/16/18 banked-memory layout — every ATDF
+      ``data``-space ``BANK<N>_*`` segment becomes a row in
+      ``arch_extensions.banked_memory`` with ``bank``,
+      ``kind`` (GPR/SFR/RAM/MIRROR), ``start``, ``size``.  The
+      universal ``memories`` array carries the full inventory
+      (banked + ``LINEAR`` + ``COMMON``).
+- [x] 2.2 PIC24 + dsPIC33 indirect-addressing — W0..W15
+      register file plus TBLPAG / DSRPAG / DSWPAG / PSVPAG /
+      NVMSRCADRL/H / RPINR0 carve into
+      ``arch_extensions.indirect_pointer_registers``.
+- [x] 2.3 dsPIC33 DSP-related SFRs — CORCON / ACCAx / DCOUNT /
+      DOSTART / DOEND / MODCON / XMODSRT / YMODEND / XBREV
+      carve into ``arch_extensions.dsp_sfrs`` (dsPIC-only;
+      PIC24F never gets the DSP block).
+- [x] 2.4 PIC32 MIPS CP0 separation — registers under
+      ``<address-space id="cp0">`` (or peripherals tagged
+      coprocessor) flow into ``arch_extensions.cp0_registers``
+      and stay out of the regular ``peripherals`` list, so
+      consumers route ``mtc0``/``mfc0`` instead of MMIO.
 
 ## Phase 3: Tests
 

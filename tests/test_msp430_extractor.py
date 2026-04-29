@@ -19,7 +19,9 @@ from alloy_data_extractor.extractor_protocol import (  # noqa: E402
     resolve_extractor,
 )
 from alloy_data_extractor.extractors.msp430 import (  # noqa: E402
+    Msp430PinPort,
     Msp430Register,
+    _discover_pin_ports,
     parse_msp430_header,
 )
 
@@ -34,12 +36,25 @@ _SYNTH_HEADER = textwrap.dedent("""\
     #define P1OUT_               0x0021
     #define P1DIR_               0x0022
     #define P1IE_                0x0025
+    #define P1SEL_               0x0026
+    #define P1SEL2_              0x0041
     #define P2IN_                0x0028
     #define P2OUT_               0x0029
+    #define P2SEL_               0x002E
     #define UCA0CTL0_            0x0060
     #define UCA0CTL1_            0x0061
     #define UCA0BR0_             0x0062
     #define UCA0BR1_             0x0063
+    #define WDTCTL_              0x0120
+    #define TAR_                 0x0170
+    #define TACCR0_              0x0172
+    #define TACTL_               0x0160
+    /* width-declaring forms */
+    sfrb(P1IN,    P1IN_);
+    sfrw(WDTCTL,  WDTCTL_);
+    sfrw(TAR,     TAR_);
+    sfrw(TACCR0,  TACCR0_);
+    sfrw(TACTL,   TACTL_);
     /* These two should be skipped by the parser because they
        lack the trailing underscore (they are macro
        dereferences, not address constants). */
@@ -137,3 +152,140 @@ def test_register_dataclass_is_frozen() -> None:
     reg = Msp430Register(name="P0", address=0x80)
     with pytest.raises(FrozenInstanceError):
         reg.address = 0x90  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.1 — 16-bit register width inference
+# ---------------------------------------------------------------------------
+
+
+def test_sfrw_declaration_marks_register_as_16bit() -> None:
+    registers = parse_msp430_header(_SYNTH_HEADER)
+    by_name = {r.name: r for r in registers}
+    assert by_name["WDTCTL"].width_bits == 16
+    assert by_name["TAR"].width_bits == 16
+    assert by_name["TACCR0"].width_bits == 16
+
+
+def test_sfrb_declaration_keeps_register_8bit() -> None:
+    registers = parse_msp430_header(_SYNTH_HEADER)
+    by_name = {r.name: r for r in registers}
+    assert by_name["P1IN"].width_bits == 8
+
+
+def test_name_pattern_fallback_marks_known_16bit_when_undeclared() -> None:
+    """No `sfrw`/`sfrb` declarations — the parser falls back to
+    the conservative name pattern for known 16-bit families."""
+    text = textwrap.dedent("""\
+        #define WDTCTL_  0x0120
+        #define TAR_     0x0170
+        #define TACCR1_  0x0174
+        #define TACTL_   0x0160
+        #define ADC10CTL0_ 0x01B0
+        #define UCA0BRW_   0x05CE
+        #define MPY32H_  0x014E
+        #define DCOCTL_  0x0056
+    """)
+    by_name = {r.name: r.width_bits for r in parse_msp430_header(text)}
+    assert by_name["WDTCTL"] == 16
+    assert by_name["TAR"] == 16
+    assert by_name["TACCR1"] == 16
+    assert by_name["TACTL"] == 16
+    assert by_name["ADC10CTL0"] == 16
+    assert by_name["UCA0BRW"] == 16
+    assert by_name["MPY32H"] == 16
+    # DCOCTL is not in the 16-bit pattern set → stays 8-bit.
+    assert by_name["DCOCTL"] == 8
+
+
+def test_sfrw_with_underscore_form_recognised() -> None:
+    """The `sfrw_(NAME, addr)` form (used by some legacy headers)
+    must also lift the width to 16."""
+    text = textwrap.dedent("""\
+        #define FOO_ 0x0200
+        sfrw_(FOO, 0x0200);
+    """)
+    registers = parse_msp430_header(text)
+    assert registers[0].width_bits == 16
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.2 — Pin discovery from PxIN / PxSEL
+# ---------------------------------------------------------------------------
+
+
+def test_discover_pin_ports_classifies_two_bit_mux() -> None:
+    """P1 has both SEL and SEL2 → 2-bit mux (4 AFs/pin); P2 has
+    only SEL → 1-bit mux."""
+    registers = parse_msp430_header(_SYNTH_HEADER)
+    ports = {p.name: p for p in _discover_pin_ports(registers)}
+    assert ports["P1"].mux_select_bits == 2
+    assert ports["P2"].mux_select_bits == 1
+
+
+def test_discover_pin_ports_handles_sel0_sel1_pair() -> None:
+    """MSP430FR-flavour parts use PxSEL0 + PxSEL1 — the classifier
+    must recognise that as a 2-bit mux too."""
+    text = textwrap.dedent("""\
+        #define P3IN_   0x0220
+        #define P3OUT_  0x0222
+        #define P3DIR_  0x0224
+        #define P3SEL0_ 0x0226
+        #define P3SEL1_ 0x0228
+    """)
+    ports = _discover_pin_ports(parse_msp430_header(text))
+    assert len(ports) == 1
+    assert ports[0].name == "P3"
+    assert ports[0].mux_select_bits == 2
+
+
+def test_discover_pin_ports_zero_bits_when_no_sel_register() -> None:
+    text = textwrap.dedent("""\
+        #define P5IN_  0x0240
+        #define P5OUT_ 0x0241
+        #define P5DIR_ 0x0242
+    """)
+    ports = _discover_pin_ports(parse_msp430_header(text))
+    assert len(ports) == 1
+    assert ports[0].mux_select_bits == 0
+
+
+def test_discover_pin_ports_skips_orphan_sel_registers() -> None:
+    """A bare PxSEL with no matching PxIN must not become a port —
+    we rely on the IN register as the port-existence signal."""
+    text = "#define P9SEL_ 0x0230\n"
+    ports = _discover_pin_ports(parse_msp430_header(text))
+    assert ports == ()
+
+
+def test_extractor_payload_carries_pin_entries(tmp_path: Path) -> None:
+    header_path = tmp_path / "msp430g2553.h"
+    header_path.write_text(_SYNTH_HEADER, encoding="utf-8")
+
+    ext = resolve_extractor("ti", "msp430")
+    request = ExtractionRequest(
+        vendor="ti",
+        family="msp430",
+        device="msp430g2553",
+        source_paths={"msp430": header_path},
+        revision="hdr-test",
+    )
+    payload = ext.extract(request).payload
+
+    pins = payload["pins"]
+    by_name = {p["name"]: p for p in pins}
+    # 8 pins per port × 2 ports → 16 pins.
+    assert len(pins) == 16
+    assert by_name["P1.0"]["bit"] == 0
+    assert by_name["P1.0"]["mux_select_bits"] == 2
+    assert by_name["P2.7"]["mux_select_bits"] == 1
+    # AFs intentionally empty — datasheet-only.
+    assert all(p["alternate_functions"] == [] for p in pins)
+
+
+def test_pin_port_dataclass_is_frozen() -> None:
+    from dataclasses import FrozenInstanceError
+
+    port = Msp430PinPort(name="P1", in_address=0x20, pin_count=8, mux_select_bits=2)
+    with pytest.raises(FrozenInstanceError):
+        port.pin_count = 4  # type: ignore[misc]

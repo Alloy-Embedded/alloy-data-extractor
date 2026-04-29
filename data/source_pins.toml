@@ -18,6 +18,18 @@ origin_url = "https://github.com/STMicroelectronics/STM32_open_pin_data"
 revision = "main"
 license = "BSD-3-Clause"
 
+[stm32cubemx-db]
+origin_url = "https://www.st.com/en/development-tools/stm32cubemx.html"
+revision = "v6.17"
+license = "ST proprietary (redistribution not allowed)"
+notes = "STM32CubeMX MCU database (db/mcu/*.xml + db/mcu/IP/* + db/plugins/clock/*). User installs CubeMX locally and supplies the install path via --source stm32cubemx-db=<path>; we never bundle the binary."
+
+[ti-msp430-headers]
+origin_url = "https://www.ti.com/tool/MSP430-GCC-OPENSOURCE"
+revision = "msp430-gcc-9.3.1.11"
+license = "BSD-3-Clause / TI redistributable"
+notes = "TI MSP430 device-header bundle (msp430xxxx.h chain) shipped with msp430-gcc / Code Composer Studio. Supplies SFR address + sfrb/sfrw width declarations the Phase 3.3 extractor consumes via --source msp430=<header>."
+
 [microchip-mplab-x-dfp]
 origin_url = "https://packs.download.microchip.com"
 revision = "TBD"  # per-pack version pinned when ATDF extractor migrates

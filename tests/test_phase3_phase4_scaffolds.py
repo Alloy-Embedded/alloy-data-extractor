@@ -66,37 +66,26 @@ def test_phase3_phase4_extractors_are_in_registry() -> None:
     assert expected_ids.issubset(set(ids))
 
 
-@pytest.mark.parametrize(
-    ("extractor_id", "phase_marker"),
-    [
-        # Only `stm32-cubemx` (Phase 3.2) remains a stub — it
-        # depends on the CubeMX MCU DB which is not bundled
-        # and not on this workstation.  All other Phase 3 + 4
-        # extractors have real implementations now (tested in
-        # their dedicated test_*.py modules).
-        ("stm32-cubemx", "Phase 3.2"),
-    ],
-)
-def test_scaffold_extract_raises_with_phase_marker(
-    extractor_id: str, phase_marker: str
-) -> None:
-    """Each scaffold's NotImplementedError mentions the matching
-    OpenSpec phase ID — so callers that hit a stub know exactly
-    which OpenSpec to chase up."""
-    ext = resolve_extractor_by_id(extractor_id)
+def test_stm32_cubemx_extract_requires_source_path() -> None:
+    """`stm32-cubemx` (Phase 3.2) is a real extractor as of
+    `add-stm32-cubemx-db-extractor`; calling it without the
+    ``stm32cubemx-db`` source raises ``MissingSourceError`` with
+    instructions, not ``NotImplementedError``."""
+    from alloy_data_extractor.extractor_protocol import MissingSourceError
+
+    ext = resolve_extractor_by_id("stm32-cubemx")
     request = ExtractionRequest(
-        vendor="x",
-        family="y",
-        device="z",
+        vendor="st",
+        family="stm32g0",
+        device="stm32g071rb",
         source_paths={},
         revision="r",
     )
-    with pytest.raises(NotImplementedError) as excinfo:
+    with pytest.raises(MissingSourceError) as excinfo:
         ext.extract(request)
     msg = str(excinfo.value)
-    assert phase_marker in msg, (
-        f"{extractor_id} stub does not reference {phase_marker}: {msg}"
-    )
+    assert "stm32cubemx-db" in msg
+    assert "--source" in msg
 
 
 def test_secondary_extractors_do_not_win_resolver() -> None:

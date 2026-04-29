@@ -131,3 +131,138 @@ def test_sfr_dataclass_is_frozen() -> None:
     sfr = Sfr(name="P0", address=0x80)
     with pytest.raises(FrozenInstanceError):
         sfr.address = 0x90  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.1 — SFR bank / page tracking
+# ---------------------------------------------------------------------------
+
+
+_HEADER_WITH_PAGE_COMMENTS = textwrap.dedent("""\
+    // SFR Page 0
+    __sfr __at (0x80) P0;
+    __sfr __at (0x88) TCON;
+
+    // SFR Page 1
+    __sfr __at (0xC1) PCON1;
+    __sfr __at (0xC2) PWMCON1;
+
+    /* Page 2 */
+    __sfr __at (0xC1) AUXR2;
+""")
+
+
+_HEADER_WITH_PRAGMA = textwrap.dedent("""\
+    __sfr __at (0x80) P0;
+    #pragma sfr_bank 1
+    __sfr __at (0xC1) PCON1;
+    __sfr __at (0xC2) PWMCON1;
+    #pragma sfr_page 0
+    __sfr __at (0x90) P1;
+""")
+
+
+def test_page_comment_assigns_bank_to_subsequent_sfrs() -> None:
+    sfrs = parse_sfr_header(_HEADER_WITH_PAGE_COMMENTS)
+    by_key = {(s.name, s.bank): s for s in sfrs}
+    # Page-0 SFRs.
+    assert by_key[("P0", 0)].address == 0x80
+    assert by_key[("TCON", 0)].address == 0x88
+    # Page-1 SFRs.
+    assert by_key[("PCON1", 1)].address == 0xC1
+    assert by_key[("PWMCON1", 1)].address == 0xC2
+    # Page-2 SFR shares an address with PCON1 but lives in a different bank.
+    assert by_key[("AUXR2", 2)].address == 0xC1
+
+
+def test_pragma_sfr_bank_directive_is_honored() -> None:
+    sfrs = parse_sfr_header(_HEADER_WITH_PRAGMA)
+    by_name = {s.name: s for s in sfrs}
+    assert by_name["P0"].bank == 0
+    assert by_name["PCON1"].bank == 1
+    assert by_name["PWMCON1"].bank == 1
+    # `#pragma sfr_page 0` resets the active bank.
+    assert by_name["P1"].bank == 0
+
+
+def test_same_address_different_banks_kept_distinct() -> None:
+    """A modern N76/EFM8-style header reuses 0xC1 across pages —
+    the parser must not dedup across banks."""
+    sfrs = parse_sfr_header(_HEADER_WITH_PAGE_COMMENTS)
+    pcon1 = next(s for s in sfrs if s.name == "PCON1")
+    auxr2 = next(s for s in sfrs if s.name == "AUXR2")
+    assert pcon1.address == auxr2.address == 0xC1
+    assert pcon1.bank != auxr2.bank
+
+
+def test_payload_peripherals_carry_bank_for_non_zero_page(tmp_path: Path) -> None:
+    header_path = tmp_path / "n76e003.h"
+    header_path.write_text(_HEADER_WITH_PAGE_COMMENTS, encoding="utf-8")
+    ext = resolve_extractor("nuvoton", "n76")
+    request = ExtractionRequest(
+        vendor="nuvoton",
+        family="n76",
+        device="n76e003at20",
+        source_paths={"intel-8051": header_path},
+        revision="header-test",
+    )
+    payload = ext.extract(request).payload
+    by_name = {(p["name"], p.get("bank", 0)): p for p in payload["peripherals"]}
+    # Page-0 entries don't carry a bank field.
+    assert "bank" not in by_name[("P0", 0)]
+    # Page-1+ entries do carry it.
+    assert by_name[("PCON1", 1)]["bank"] == 1
+    assert by_name[("AUXR2", 2)]["bank"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.2 — Indirect-addressing decoration
+# ---------------------------------------------------------------------------
+
+
+_HEADER_WITH_ADDR_MODES = textwrap.dedent("""\
+    __idata __sfr __at (0xE0) ACC;
+    __xdata __sfr __at (0xE1) AUXR;
+    __pdata __sfr __at (0xE2) PFLAG;
+    __bdata __sfr __at (0xE3) FLAGS;
+    __sfr __at (0xE4) PSW;
+    __idata __sbit __at (0xE0) ACC_0;
+""")
+
+
+def test_idata_keyword_marks_register_indirect() -> None:
+    sfrs = parse_sfr_header(_HEADER_WITH_ADDR_MODES)
+    by_name = {s.name: s for s in sfrs}
+    assert by_name["ACC"].addressing_mode == "indirect"
+    assert by_name["AUXR"].addressing_mode == "external"
+    assert by_name["PFLAG"].addressing_mode == "paged"
+    assert by_name["FLAGS"].addressing_mode == "bit-addressable"
+    # Bare declaration falls back to direct.
+    assert by_name["PSW"].addressing_mode == "direct"
+
+
+def test_sbit_with_idata_keyword_overrides_default_bit_mode() -> None:
+    sfrs = parse_sfr_header(_HEADER_WITH_ADDR_MODES)
+    by_name = {s.name: s for s in sfrs}
+    assert by_name["ACC_0"].is_bit
+    assert by_name["ACC_0"].addressing_mode == "indirect"
+
+
+def test_payload_registers_carry_bank_and_addressing_mode(tmp_path: Path) -> None:
+    header_path = tmp_path / "synth.h"
+    header_path.write_text(
+        _HEADER_WITH_PAGE_COMMENTS + _HEADER_WITH_ADDR_MODES, encoding="utf-8"
+    )
+    ext = resolve_extractor("silabs", "efm8")
+    request = ExtractionRequest(
+        vendor="silabs",
+        family="efm8",
+        device="efm8bb1",
+        source_paths={"intel-8051": header_path},
+        revision="r",
+    )
+    payload = ext.extract(request).payload
+    by_name = {(r["name"], r["bank"]): r for r in payload["registers"]}
+    assert by_name[("ACC", 2)]["addressing_mode"] == "indirect"
+    assert by_name[("PSW", 2)]["addressing_mode"] == "direct"
+    assert by_name[("P0", 0)]["addressing_mode"] == "direct"

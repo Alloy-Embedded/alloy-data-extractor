@@ -15,12 +15,23 @@
 
 ## Phase 2: Implementation extensions
 
-- [ ] 2.1 16-bit register width inference (e.g. TAR / TACCR0).
-- [ ] 2.2 Pin-multiplexing tables (P1SEL / P1SEL2 → AF
-      mapping projection).
-- [ ] 2.3 Pin entry `ti-msp430-headers` with origin URL.
+- [x] 2.1 16-bit register width inference (e.g. TAR / TACCR0)
+      — explicit `sfrb`/`sfrw` declarations preferred, with a
+      conservative name-pattern fallback for headers that omit
+      them (TIMER A/B, WDT, ADC10/12, MPY32, USCI 16-bit).
+- [x] 2.2 Pin-multiplexing tables (P1SEL / P1SEL2 → mux arity
+      projection).  Pins are derived from `PxIN`; mux arity
+      classified as 0/1/2 bits depending on which `PxSEL*`
+      registers are present.  AF→peripheral mapping itself is
+      datasheet-only (out of scope for header parsing) and the
+      payload's `pins[*].alternate_functions` is left empty as a
+      forward-compatible hook.
+- [x] 2.3 Pin entry `ti-msp430-headers` with origin URL
+      (msp430-gcc-9.3.1.11).
 - [ ] 2.4 Bulk-extract a representative slice (~20 chips per
       series) and commit YAMLs to alloy-devices-yml.
+      *Deferred — bulk-pass + alloy-devices-yml PR is a daytime
+      session.*
 
 ## Phase 3: Validate + archive
 

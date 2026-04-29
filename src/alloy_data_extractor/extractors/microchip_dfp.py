@@ -93,6 +93,50 @@ def _atdf_core_to_canonical(atdf_arch: str | None) -> str:
     return table.get(upper, upper.lower())
 
 
+def _memory_regions(device: ET.Element) -> list[dict[str, Any]]:
+    """Project ``<address-spaces>`` + ``<memory-segment>`` into a
+    flat list of memory-region rows.
+
+    Shared by the AVR/SAM/PIC families — every Microchip ATDF lays
+    these out the same way.  Output shape::
+
+        {
+          "name": "BANK0_GPR",
+          "address_space": "data",
+          "address_space_id": "data",
+          "kind": "ram",          # ATDF type: ram/flash/eeprom/io/...
+          "start": 0x20,
+          "size": 0x60,
+          "rw": "RW",
+        }
+    """
+    rows: list[dict[str, Any]] = []
+    address_spaces = device.find("address-spaces")
+    if address_spaces is None:
+        return rows
+    for address_space in address_spaces.findall("address-space"):
+        space_name = address_space.get("name", "")
+        space_id = address_space.get("id", space_name)
+        for segment in address_space.findall("memory-segment"):
+            start = _parse_int(segment.get("start"))
+            size = _parse_int(segment.get("size"))
+            if start is None or size is None:
+                continue
+            rows.append(
+                {
+                    "name": segment.get("name", ""),
+                    "address_space": space_name,
+                    "address_space_id": space_id,
+                    "kind": segment.get("type", "") or "",
+                    "start": start,
+                    "size": size,
+                    "rw": segment.get("rw", "") or "",
+                }
+            )
+    rows.sort(key=lambda r: (r["address_space_id"], r["start"], r["name"]))
+    return rows
+
+
 def _peripheral_records(device: ET.Element) -> tuple[list[dict], list[dict]]:
     peripherals: list[dict] = []
     interrupts: list[dict] = []
@@ -192,6 +236,7 @@ class MicrochipDfpExtractor:
             )
         core = _atdf_core_to_canonical(device.get("architecture"))
         peripherals, interrupts = _peripheral_records(device)
+        memories = _memory_regions(device)
 
         payload: dict[str, Any] = {
             "schema_version": "1.2.0",
@@ -208,7 +253,7 @@ class MicrochipDfpExtractor:
                 "source_path": str(atdf_path),
                 "patch_ids": [],
             },
-            "memories": [],
+            "memories": memories,
             "peripherals": peripherals,
             "interrupts": interrupts,
         }
@@ -228,4 +273,4 @@ class MicrochipDfpExtractor:
         )
 
 
-__all__ = ["MicrochipDfpExtractor"]
+__all__ = ["MicrochipDfpExtractor", "_memory_regions"]
