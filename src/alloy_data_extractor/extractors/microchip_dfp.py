@@ -95,19 +95,20 @@ def _atdf_core_to_canonical(atdf_arch: str | None) -> str:
 
 def _memory_regions(device: ET.Element) -> list[dict[str, Any]]:
     """Project ``<address-spaces>`` + ``<memory-segment>`` into a
-    flat list of memory-region rows.
+    flat list of memory-region rows shaped like the canonical-YAML
+    ``memories`` schema (``name`` / ``kind`` / ``base_address`` /
+    ``size_bytes`` / ``access`` / ``address_space``).
 
     Shared by the AVR/SAM/PIC families — every Microchip ATDF lays
     these out the same way.  Output shape::
 
         {
           "name": "BANK0_GPR",
+          "kind": "ram",            # ATDF type: ram/flash/eeprom/io/...
+          "base_address": 0x20,
+          "size_bytes": 0x60,
+          "access": "rw",           # ATDF rw="RW" lowercased
           "address_space": "data",
-          "address_space_id": "data",
-          "kind": "ram",          # ATDF type: ram/flash/eeprom/io/...
-          "start": 0x20,
-          "size": 0x60,
-          "rw": "RW",
         }
     """
     rows: list[dict[str, Any]] = []
@@ -115,8 +116,7 @@ def _memory_regions(device: ET.Element) -> list[dict[str, Any]]:
     if address_spaces is None:
         return rows
     for address_space in address_spaces.findall("address-space"):
-        space_name = address_space.get("name", "")
-        space_id = address_space.get("id", space_name)
+        space_id = address_space.get("id", address_space.get("name", ""))
         for segment in address_space.findall("memory-segment"):
             start = _parse_int(segment.get("start"))
             size = _parse_int(segment.get("size"))
@@ -125,15 +125,14 @@ def _memory_regions(device: ET.Element) -> list[dict[str, Any]]:
             rows.append(
                 {
                     "name": segment.get("name", ""),
-                    "address_space": space_name,
-                    "address_space_id": space_id,
                     "kind": segment.get("type", "") or "",
-                    "start": start,
-                    "size": size,
-                    "rw": segment.get("rw", "") or "",
+                    "base_address": start,
+                    "size_bytes": size,
+                    "access": (segment.get("rw") or "").lower(),
+                    "address_space": space_id,
                 }
             )
-    rows.sort(key=lambda r: (r["address_space_id"], r["start"], r["name"]))
+    rows.sort(key=lambda r: (r["address_space"], r["base_address"], r["name"]))
     return rows
 
 

@@ -94,13 +94,13 @@ def _classify_pic8_banks(memories: list[dict[str, Any]]) -> list[dict[str, Any]]
     ``LINEAR``) flow through unchanged.
 
     Returns one row per recognized bank; rows are sorted by bank
-    index then by start address.  Entries that don't match the
+    index then by base address.  Entries that don't match the
     bank-name regex are silently skipped (they remain visible in
     the unfiltered ``memories`` list).
     """
     banks: list[dict[str, Any]] = []
     for memory in memories:
-        if memory["address_space_id"] != "data":
+        if memory["address_space"] != "data":
             continue
         match = _BANK_NAME_RE.match(memory["name"])
         if not match:
@@ -110,11 +110,11 @@ def _classify_pic8_banks(memories: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "bank": int(match.group("index")),
                 "kind": (match.group("kind") or "").upper(),
                 "name": memory["name"],
-                "start": memory["start"],
-                "size": memory["size"],
+                "base_address": memory["base_address"],
+                "size_bytes": memory["size_bytes"],
             }
         )
-    banks.sort(key=lambda r: (r["bank"], r["start"], r["name"]))
+    banks.sort(key=lambda r: (r["bank"], r["base_address"], r["name"]))
     return banks
 
 
@@ -213,13 +213,13 @@ def _classify_pic32_cp0(
     """
     rows: list[dict[str, Any]] = []
     for memory in memories:
-        if memory["address_space_id"] != "cp0":
+        if memory["address_space"] != "cp0":
             continue
         rows.append(
             {
                 "name": memory["name"],
-                "address": memory["start"],
-                "size": memory["size"],
+                "address": memory["base_address"],
+                "size": memory["size_bytes"],
                 "kind": "cp0-register",
             }
         )

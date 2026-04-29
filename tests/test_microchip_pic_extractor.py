@@ -196,8 +196,9 @@ def test_pic18_projection_carries_memories_and_banked_extension(tmp_path: Path) 
     banks = payload["arch_extensions"]["banked_memory"]
     by_index = {b["bank"]: b for b in banks}
     assert by_index[0]["kind"] == "GPR"
-    assert by_index[0]["start"] == 0x20
-    assert by_index[1]["start"] == 0xA0
+    assert by_index[0]["base_address"] == 0x20
+    assert by_index[0]["size_bytes"] == 0x60
+    assert by_index[1]["base_address"] == 0xA0
     assert by_index[15]["kind"] == "SFR"
 
 
