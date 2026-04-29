@@ -41,74 +41,57 @@
 
 ## Phase 2: stm32-tier secondary extractor
 
-- [ ] 2.1 Create `extractors/stm32_tier.py` registered as
-      secondary (`families=(("__stm32_tier_secondary__",
-      "__stm32_tier_secondary__"),)`).  It does not win the
-      resolver; the merge engine invokes it explicitly.
-- [ ] 2.2 Define per-IP-version mapping tables under
-      `extractors/stm32_tier_mappings.py`:
-      - `USART_V3_*_MAPPING` — `(field_id_pattern, target_field,
-        projection_fn)` rows for usart_v3_x family.
-      - `ADC_V3_*_MAPPING` — same for adc_v3_x.
-      - `SPI_V3_*_MAPPING` — same.
-      - `GPTIMER_V3_*_MAPPING` — basic timers (TIM2, TIM3, TIM6,
-        TIM7, TIM14, TIM15, TIM16, TIM17 on G0).
-      - `ADVTIMER_V3_*_MAPPING` — advanced timers (TIM1, TIM8 on
-        F4 / F7).
-      - Initial coverage: ≥ 1 IP version per peripheral class on
-        STM32G0 + STM32F4.
-- [ ] 2.3 Implement projection helpers per tier field:
-      - `_project_resolution_options(enum_rows) -> tuple[dict]`
-        returning `[{value_bits, raw_value, name}]`.
-      - `_project_sample_time_options(enum_rows)`.
-      - `_project_oversampling_options(enum_rows)`.
-      - `_project_external_triggers(enum_rows, peripheral_kind)`.
-      - `_project_uart_data_bits(m0_rows, m1_rows)` — USART
-        encodes data-bits across CR1.M0 + CR1.M1 (3 bits = 5/6/
-        7/8/9).
-      - `_project_uart_parity(pce_rows, ps_rows)`.
-      - `_project_uart_stop_bits(stop_rows)`.
-      - `_project_uart_baud_clock_sources(rcc_ccipr_rows)`.
-      - `_project_spi_baud_prescaler(br_rows)`.
-      - `_project_timer_trigger_sources(ts_rows)`.
-      - `_project_timer_master_outputs(mms_rows)`.
-      - `_project_pwm_alignment_options(cms_rows)`.
-- [ ] 2.4 Computed projections (no enum needed):
-      - `_compute_timer_prescaler_options(psc_field_width)` —
-        emit `[{prescaler_value: 1, raw_value: 0}, …,
-        {prescaler_value: 65536, raw_value: 65535}]` for
-        16-bit PSC; sparse rendering (every power of 2 + a few
-        notable values) to keep the array tractable.
-      - `_compute_pwm_deadtime_options(dtg_field_width)` — emit
-        `[{deadtime_ticks: i, raw_value: i} for i in
-        range(2**dtg_width)]`.
-- [ ] 2.5 Field-presence detection for mode flags:
-      - `timer_mode_flags`:
-        - `supports_repetition_counter` ← peripheral has
-          `register:tim{n}:rcr`
-        - `supports_dma_burst` ← peripheral has `register:tim{n}:
-          dcr` + `dmar`
-        - `supports_xor_input` ← peripheral has `field:tim{n}:
-          cr2:ti1s`
-      - `pwm_mode_flags`:
-        - `supports_complementary_outputs` ← peripheral has
-          BDTR.MOE + CCER.CCxNE pattern
-        - `supports_break_input` ← peripheral has BDTR.BKE
-        - `supports_break_input_2` ← peripheral has BDTR.BK2E
-        - `supports_dead_time_insertion` ← peripheral has
-          BDTR.DTG
-- [ ] 2.6 Resolve peripheral IP versions: read
-      `cubemx_peripherals[*].ip_version` from the merged
-      payload (Phase 3.5 of the cubemx work) and dispatch the
-      right mapping table.
-- [ ] 2.7 Tests:
-      - Per-projection unit tests with synthetic enum input.
-      - Per-IP-version integration test against `STM32G071.svd`.
-      - End-to-end via `merge_payloads` confirms the merged
-        payload carries `adc_resolution_options` (≥4 rows),
-        `uart_data_bits_options` (≥3 rows),
-        `timer_master_outputs` (≥6 rows), `pwm_alignment_options`
-        (≥4 rows) for stm32g071rb.
+- [x] 2.1 Created `extractors/stm32_tier.py` registered as
+      secondary `("__stm32_tier_secondary__","…")`.  Walks the
+      CubeMX MCU XML directly (independent re-read) to discover
+      peripheral instances + IP versions.
+- [x] 2.2 `extractors/stm32_tier_mappings.py` ships
+      9 TierMapping entries: USART_SCI3_V2, USART_SCI2_V1,
+      SPI_V3, I2C_V1, ADC_G0_V3, ADC_F4_V3, TIMER_GPTIMER_V3,
+      TIMER_F4_ADV, TIMER_F4_GP.  Initial coverage targets
+      STM32G0 (full) + STM32F4 (USART/ADC/timer subset).
+- [x] 2.3 Hardcoded projection rows live inline in the mapping
+      tables (USART data_bits/parity/stop_bits/mode_flags,
+      SPI baud_prescaler, ADC resolution/sample_time/
+      oversampling/external_triggers, timer master_outputs/
+      trigger_sources/prescaler, PWM alignment/break_inputs/
+      deadtime/mode_flags).  The original "project from SVD
+      enums" plan was downgraded after observing wildly uneven
+      enum coverage in cmsis-svd-data community SVDs — STM32G071
+      ships enums for ADC + TIM15 only, STM32F405 ships zero.
+      Hardcoded per-IP-version constants deliver tier-3
+      deterministically regardless of SVD richness, with
+      identical maintenance cost (one edit per IP version).
+- [x] 2.4 Computed projections embedded in mapping rows:
+      `timer_prescaler_options` rendered sparse (1, 2, 4 …
+      65536 — 17 powers-of-2 entries) since the full 65,536-row
+      table would bloat the YAML; `pwm_deadtime_options`
+      emitted as 4 range rows matching the BDTR.DTG non-linear
+      encoding.
+- [x] 2.5 Mode-flag rows hardcoded per IP version (advanced
+      timers get `supports_repetition_counter=True` etc.;
+      general-purpose timers get the non-advanced subset).
+      Field-presence detection from the SVD register tree was
+      the original plan — collapsed into per-IP-version
+      constants for the same reason as 2.3 (more deterministic,
+      one edit per IP version).
+- [x] 2.6 IP versions resolved by re-parsing the CubeMX MCU XML
+      via the existing `stm32_cubemx._parse_mcu_xml` helper —
+      the per-instance `<IP Version="…">` attribute is now also
+      surfaced in stm32-cubemx's payload as
+      `cubemx_peripherals[]` for downstream auditing.
+      `STM32_MERGE_POLICY` extended with 18 tier-field-priority
+      rules routing each tier array through `stm32-tier`.
+- [x] 2.7 Tests under `test_stm32_tier_extractor.py` (19 new):
+      version-pattern dispatch (parametric over 6 IPs);
+      cross-instance dedup; cross-IP-version row union;
+      unmapped-instance skip; deterministic sort; provenance
+      stamping; resolver-secondary; missing-source raises;
+      warning surface for unmapped IPs; synthetic-DB end-to-end
+      (15 tier fields populated); real-DB smoke test against
+      the locally installed CubeMX.  Verified the merged
+      stm32g071rb pipeline lights up 18 tier-3/4 fields via
+      this projector alone.
 
 ## Phase 3: CubeMX ADC internal channels
 

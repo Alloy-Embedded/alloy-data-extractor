@@ -96,6 +96,22 @@ class CubeMxClockNode:
 
 
 @dataclass(frozen=True, slots=True)
+class CubeMxPeripheralInstance:
+    """One ``<IP>`` entry from the MCU root XML.
+
+    Per-instance IP info — keyed by ``instance_name`` (e.g.
+    ``USART1`` / ``ADC1``).  ``ip_version`` is what the
+    ``stm32-tier`` projector uses to dispatch the right tier
+    mapping table.
+    """
+
+    instance_name: str
+    ip_name: str
+    ip_version: str
+    config_file: str
+
+
+@dataclass(frozen=True, slots=True)
 class McuFacts:
     """Facts harvested from the MCU root XML."""
 
@@ -106,6 +122,7 @@ class McuFacts:
     gpio_version: str
     dma_versions: tuple[str, ...]
     pins: tuple[CubeMxPin, ...]
+    peripheral_instances: tuple[CubeMxPeripheralInstance, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -230,15 +247,30 @@ def _parse_mcu_xml(path: Path) -> McuFacts:
 
     gpio_version = ""
     dma_versions: list[str] = []
+    peripheral_instances: list[CubeMxPeripheralInstance] = []
     for ip in _findall_named(root, "IP"):
         ip_name = ip.attrib.get("Name", "")
         version = ip.attrib.get("Version", "")
+        instance_name = ip.attrib.get("InstanceName", "")
+        config_file = ip.attrib.get("ConfigFile", "")
         if ip_name == "GPIO" and not gpio_version:
             gpio_version = version
         elif ip_name == "DMA" and version not in dma_versions:
             dma_versions.append(version)
         elif ip_name == "BDMA" and version not in dma_versions:
             dma_versions.append(version)
+        # Capture every peripheral instance — the stm32-tier
+        # projector dispatches per-IP-version mapping tables off
+        # this list.
+        if instance_name and ip_name:
+            peripheral_instances.append(
+                CubeMxPeripheralInstance(
+                    instance_name=instance_name,
+                    ip_name=ip_name,
+                    ip_version=version,
+                    config_file=config_file,
+                )
+            )
 
     pins: list[CubeMxPin] = []
     for pin in _findall_named(root, "Pin"):
@@ -265,6 +297,7 @@ def _parse_mcu_xml(path: Path) -> McuFacts:
         gpio_version=gpio_version,
         dma_versions=tuple(dma_versions),
         pins=tuple(pins),
+        peripheral_instances=tuple(peripheral_instances),
     )
 
 
@@ -535,6 +568,19 @@ def _cubemx_to_payload(
         if len(sources) > 1
     ]
 
+    # Per-instance IP info — the stm32-tier projector dispatches
+    # off this list to pick the right per-IP-version mapping
+    # table for each peripheral.
+    cubemx_peripherals = [
+        {
+            "instance_name": p.instance_name,
+            "ip_name": p.ip_name,
+            "ip_version": p.ip_version,
+            "config_file": p.config_file,
+        }
+        for p in mcu.peripheral_instances
+    ]
+
     return {
         "schema_version": "1.2.0",
         "identity": {
@@ -554,6 +600,7 @@ def _cubemx_to_payload(
         "clock_selectors": selectors_payload,
         "dma_requests": dma_payload,
         "pins": pins,
+        "cubemx_peripherals": cubemx_peripherals,
     }
 
 

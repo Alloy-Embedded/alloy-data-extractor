@@ -89,13 +89,33 @@ def main() -> int:
     print(
         f"cubemx   {args.device}: {len(cubemx.payload.get('pins', []))} pins, "
         f"{len(cubemx.payload.get('dma_requests', []))} dma_requests, "
-        f"{len(cubemx.payload.get('clock_nodes', []))} clock_nodes"
+        f"{len(cubemx.payload.get('clock_nodes', []))} clock_nodes, "
+        f"{len(cubemx.payload.get('cubemx_peripherals', []))} cubemx_peripherals"
     )
+
+    # stm32-tier enrichment (per-IP-version tier-2/3/4 projection).
+    tier_ext = resolve_extractor_by_id("stm32-tier")
+    tier = tier_ext.extract(
+        ExtractionRequest(
+            vendor=args.vendor,
+            family=args.family,
+            device=args.device,
+            source_paths={"stm32cubemx-db": args.cubemx_db},
+            revision=args.revision,
+        )
+    )
+    tier_field_count = sum(
+        1
+        for k in tier.payload
+        if k
+        not in {"schema_version", "identity", "provenance", "stm32_tier_resolution"}
+    )
+    print(f"tier     {args.device}: {tier_field_count} tier-2/3/4 fields populated")
 
     # Merge.
     merged = merge_payloads(
         primary=primary.payload,
-        enrichments=(cubemx.payload,),
+        enrichments=(cubemx.payload, tier.payload),
         policy=STM32_MERGE_POLICY,
     )
     print(

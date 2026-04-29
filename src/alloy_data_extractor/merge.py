@@ -95,6 +95,27 @@ STM32_MERGE_POLICY = MergePolicy(
         # in extra register fields if SVD is sparse.
         "registers": ("stm32", "modm-devices"),
         "register_fields": ("stm32", "modm-devices"),
+        # Tier-2/3/4 arrays — `stm32-tier` projects them from
+        # per-IP-version mapping tables, authoritative for ST.
+        # `complete-stm32-tier-coverage` Phase 2.
+        "adc_resolution_options": ("stm32-tier",),
+        "adc_sample_time_options": ("stm32-tier",),
+        "adc_oversampling_options": ("stm32-tier",),
+        "adc_external_triggers": ("stm32-tier",),
+        "uart_data_bits_options": ("stm32-tier",),
+        "uart_parity_options": ("stm32-tier",),
+        "uart_stop_bits_options": ("stm32-tier",),
+        "uart_mode_flags": ("stm32-tier",),
+        "spi_baud_prescaler_options": ("stm32-tier",),
+        "i2c_mode_flags": ("stm32-tier",),
+        "timer_prescaler_options": ("stm32-tier",),
+        "timer_trigger_sources": ("stm32-tier",),
+        "timer_master_outputs": ("stm32-tier",),
+        "timer_mode_flags": ("stm32-tier",),
+        "pwm_alignment_options": ("stm32-tier",),
+        "pwm_break_inputs": ("stm32-tier",),
+        "pwm_deadtime_options": ("stm32-tier",),
+        "pwm_mode_flags": ("stm32-tier",),
     },
 )
 

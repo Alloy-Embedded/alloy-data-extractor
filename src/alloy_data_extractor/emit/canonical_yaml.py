@@ -70,6 +70,7 @@ _TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "registers",
     "register_fields",
     "register_field_enumerations",
+    "cubemx_peripherals",
     "capabilities",
     "signal_endpoints",
     "route_requirements",
@@ -87,6 +88,38 @@ _TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "dma_bindings",
     "dma_routes",
     "startup_descriptors",
+    # Tier-2/3/4 arrays projected by the `stm32-tier` extractor
+    # under `complete-stm32-tier-coverage` Phase 2.  Order
+    # mirrors the existing canonical YAML's tail layout.
+    "adc_resolution_options",
+    "adc_sample_time_options",
+    "adc_oversampling_options",
+    "adc_internal_channels",
+    "adc_calibration_data_points",
+    "adc_calibration_context",
+    "adc_external_triggers",
+    "adc_max_clock_hz",
+    "uart_data_bits_options",
+    "uart_parity_options",
+    "uart_stop_bits_options",
+    "uart_mode_flags",
+    "uart_max_baud_hz",
+    "spi_baud_prescaler_options",
+    "spi_mode_flags",
+    "i2c_speed_options",
+    "i2c_timing_presets",
+    "i2c_mode_flags",
+    "timer_prescaler_options",
+    "timer_trigger_sources",
+    "timer_master_outputs",
+    "timer_mode_flags",
+    "pwm_alignment_options",
+    "pwm_break_inputs",
+    "pwm_deadtime_options",
+    "pwm_mode_flags",
+    # Diagnostic surface from stm32-tier — kept last so reviewers
+    # can audit which IPs had no mapping table.
+    "stm32_tier_resolution",
 )
 
 
