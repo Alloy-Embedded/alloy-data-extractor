@@ -19,22 +19,41 @@ invariant before the next begins.
 
 ---
 
-## Where we are today
+## Where we are today (April 2026)
 
 | Layer | Status |
 |---|---|
 | Canonical YAML schema (`vendor.schema.json` + `family.schema.json` + `device.schema.json`) | ✅ Shipped in alloy-devices-yml |
 | Codegen consumer (`alloy_codegen.sources.alloy_devices_yml`) | ✅ Shipped |
-| Extractor scaffolding (CLI, pipeline, canonical-YAML writer) | ✅ ~953 LOC, 2 tests |
-| Extractors registered in `_EXTRACTORS` | ⚠️ 2/9 (`cmsis-svd`, `zephyr-dts`) |
-| Vendor parsers still living in `alloy-codegen/src/alloy_codegen/sources/` | ❌ 9 files, ~3,500 LOC, 7 `_build_*_device_ir` callers in `normalize.py` |
-| 17 admitted devices already have canonical YAML | ✅ |
-| Bulk-mode (auto-discover chips from cmsis-pack-manager) | ❌ Not started |
-| PIC / MSP430 / 8051 / non-ESP RISC-V coverage | ❌ Not started |
-| Cross-source merge (SVD ⊕ Cube ⊕ modm ⊕ DTS for the same chip) | ❌ Not started |
+| Extractor scaffolding (CLI, pipeline, canonical-YAML writer) | ✅ |
+| Extractors registered in the protocol registry | ✅ 15 extractors |
+| 17 admitted devices: codegen-side parity gate green | ✅ 17/17 pass |
+| Bulk-mode (auto-discover chips from cmsis-pack-manager) | ✅ Phase 2.1 archived |
+| Cross-source merge (SVD ⊕ open-pin-data ⊕ modm) | ✅ Phase 2.2 archived |
+| Coverage index + dashboard | ✅ Phase 2.3 archived |
+| Bulk-admitted catalog | ✅ **4,400+ chips** across 22 vendors |
+| Zephyr DTS pipeline (8 vendors mapped) | ✅ 159/164 chips extract clean |
+| PIC / MSP430 / 8051 / community RISC-V | ✅ Real implementations + tests |
+| Vendor parsers still living in `alloy-codegen/src/alloy_codegen/sources/` | ⏳ Pending Phase 1 codegen-side cleanup |
 
-The gap between "scaffolding exists" and "all admission goes
-through this repo" is the work this roadmap plans.
+**Bulk-admitted catalog breakdown:**
+
+* **CMSIS-Pack manager** — 3,650 chips across 16 vendors (SiLabs,
+  Cypress, Infineon, Nuvoton, TI, Renesas, Toshiba, ARM, Ambiq,
+  + 8 community vendors).  Pulls per-chip pack zips on demand,
+  extracts SVD, cross-references catalog metadata.
+* **STM32 cross-source merge** — 503 chips (CMSIS-SVD ⊕ STM32
+  open-pin-data ⊕ optionally modm-devices).  Schema_version 1.3.0
+  with per-field provenance.
+* **Zephyr DTS** — 159 chips across nordic / atmel / ambiq /
+  silabs / ti families (cpp-preprocessed `.dtsi` → dtlib).
+* **Vendor-direct extractors** — 17 admitted + 47 Microchip ATDF
+  + 8 Espressif + 2 NXP iMXRT.
+
+Total active extractors: **15** (cmsis-pack, cmsis-svd,
+datasheet-pdf, esp-idf, intel-8051, microchip-dfp, microchip-pic,
+modm-devices, msp430, nxp-mcux, pico-sdk, stm32, stm32-cubemx,
+stm32-open-pin-data, zephyr-dts).
 
 ---
 
