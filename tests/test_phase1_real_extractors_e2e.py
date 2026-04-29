@@ -127,6 +127,28 @@ def test_phase1_real_extractor_raises_value_error_when_no_source(
         ext.extract(request)
 
 
+def test_nxp_mcux_per_row_provenance_uses_soc_svd_pin(synth_svd: Path) -> None:
+    """`complete-imxrt1060-register-coverage`: every peripheral /
+    register / register_field row's provenance source_id is the
+    NXP source-pin id (`nxp-mcux-soc-svd`), not the generic
+    `cmsis-svd` the shared walker stamps by default."""
+    ext = resolve_extractor("nxp", "imxrt1060")
+    request = ExtractionRequest(
+        vendor="nxp",
+        family="imxrt1060",
+        device="mimxrt1062",
+        source_paths={"cmsis-svd": synth_svd},
+        revision="prov-test",
+    )
+    payload = ext.extract(request).payload
+    # Top-level provenance still says "nxp-mcux" (the extractor id).
+    assert payload["provenance"]["source_id"] == "nxp-mcux"
+    # Per-row provenance is rewritten to the source-pin id.
+    for row_field in ("peripherals", "interrupts"):
+        for row in payload[row_field]:
+            assert row["provenance"]["source_id"] == "nxp-mcux-soc-svd"
+
+
 def test_microchip_dfp_extracts_synthetic_atdf(tmp_path: Path) -> None:
     """ATDF parser smoke test: feed a minimal ATDF and verify
     the extractor pulls peripherals + interrupts."""

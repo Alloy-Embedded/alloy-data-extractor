@@ -1,19 +1,29 @@
-"""NXP MCUXpresso extractor — `migrate-nxp-mcux-extractor` (Phase 1.3).
+"""NXP MCUXpresso extractor — `migrate-nxp-mcux-extractor` (Phase 1.3)
++ `complete-imxrt1060-register-coverage`.
 
 Reads the per-device XML descriptors from `nxp-mcux-soc-svd`
 (the upstream NXP repo that ships
 ``MIMXRT1062/MIMXRT1062.xml`` etc).  The XML format is
 SVD-compatible — the extractor reuses the CMSIS-SVD parser.
 
-What this DOES today:
-* Resolve the per-device XML from the NXP SoC SVD source root.
-* Extract peripherals + interrupts + register layout.
-* Stamp `provenance.source_id = "nxp-mcux"`.
+Surface:
+
+* Resolves the per-device XML from the NXP SoC SVD source root.
+* Extracts peripherals + interrupts + the full register tree
+  (registers + register_fields) via the shared cmsis-svd
+  walker, with `<derivedFrom>`, `<dim>` arrays, and
+  `bitOffset/bitWidth` / `bitRange` / `lsb-msb` field positions
+  all resolved.
+* Stamps top-level provenance with
+  ``source_id = "nxp-mcux"`` and rewrites every per-row
+  provenance source_id to ``"nxp-mcux-soc-svd"`` so reviewers
+  can trace each peripheral / register / field row back to the
+  upstream NXP SoC SVD pin.
 
 What it does NOT do yet:
-* Apply iMXRT IOMUX / GPIO pin tables that the codegen-side
-  ``populate-imxrt-iomux-gpio-pins`` provides.  Those still
-  layer in via the codegen legacy path.
+* Apply iMXRT IOMUX / GPIO pin tables — IOMUX is sourced from
+  ``MIMXRT1062.h`` (C header) rather than the SoC XML and is a
+  separate workstream.
 """
 
 from __future__ import annotations
@@ -82,6 +92,30 @@ class NxpMcuxExtractor:
         provenance["source_path"] = str(svd_path)
         payload["provenance"] = provenance
 
+        # Per-row provenance: rewrite the source_id stamped by the
+        # cmsis-svd walker ("cmsis-svd") to "nxp-mcux-soc-svd" — the
+        # source-pin id from data/source_pins.toml that
+        # complete-imxrt1060-register-coverage calls out.  Reviewers
+        # auditing a YAML can trace any peripheral/register/field
+        # row back to the upstream NXP repo pin.
+        for row_field in ("peripherals", "interrupts", "registers", "register_fields"):
+            for row in payload.get(row_field, []):
+                row_prov = row.get("provenance")
+                if isinstance(row_prov, dict):
+                    row_prov["source_id"] = "nxp-mcux-soc-svd"
+
+        warnings: list[str] = []
+        if not payload.get("registers"):
+            warnings.append(
+                "NXP MCUX extractor: SoC XML carried no register "
+                "tree — payload's `registers` / `register_fields` "
+                "are empty."
+            )
+        warnings.append(
+            "NXP MCUX extractor: IOMUX / GPIO pin tables sourced from "
+            "MIMXRT1062.h are out of scope; populate via a separate "
+            "follow-up workstream when needed."
+        )
         return ExtractionResult(
             payload=payload,
             provenance=ProvenanceRecord(
@@ -89,10 +123,7 @@ class NxpMcuxExtractor:
                 source_path=str(svd_path),
                 revision=request.revision,
             ),
-            warnings=(
-                "NXP MCUX extractor: IOMUX / GPIO pin tables not "
-                "yet emitted — Phase 1.3 follow-up ports them.",
-            ),
+            warnings=tuple(warnings),
         )
 
 

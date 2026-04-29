@@ -1,16 +1,18 @@
 ## ADDED Requirements
 
-### Requirement: The nxp_mcux extractor SHALL emit every CMSIS-SVD register + field
+### Requirement: The nxp-mcux extractor SHALL emit the full CMSIS-SVD register tree
 
-For every iMXRT-family device admitted via the `nxp_mcux`
-extractor, the resulting canonical IR's `device.registers` and
-`device.register_fields` SHALL include every register declared
-in the device's CMSIS-SVD source — no peripheral whitelist, no
-size filter — with full `(peripheral, name, offset, access,
-size_bits)` for registers and `(peripheral, register_name,
-name, bit_offset, bit_width, access)` for fields.  Registers
-tagged with `<derivedFrom>` SHALL inherit the source register's
-field set rather than appearing as empty rows.
+The `nxp_mcux` extractor SHALL include every register declared
+in the device's CMSIS-SVD source in the canonical IR's
+`device.registers` and `device.register_fields` lists — no
+peripheral whitelist, no size filter — with full
+`(peripheral, name, offset, access, size_bits)` for registers
+and `(peripheral, register_name, name, bit_offset, bit_width,
+access)` for fields.  Registers tagged with `<derivedFrom>`
+SHALL inherit the source register's field set rather than
+appearing as empty rows.  Every per-row provenance block SHALL
+carry `source_id="nxp-mcux-soc-svd"` so reviewers can trace
+each row back to the upstream NXP SoC SVD pin.
 
 #### Scenario: mimxrt1062 register density matches SVD source
 
