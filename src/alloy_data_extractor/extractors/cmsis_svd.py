@@ -283,24 +283,171 @@ def _expand_register_dim(register: ET.Element) -> list[dict[str, Any]]:
     return rows
 
 
+def _parse_field_enumerations(
+    field: ET.Element,
+    *,
+    field_id: str,
+    peripheral: str,
+    register_name: str,
+    field_name: str,
+    source_id: str,
+    source_path: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Walk a SVD ``<field>``'s ``<enumeratedValues>`` blocks.
+
+    Returns ``(resolved_rows, deferred_rows)``.  Resolved rows
+    carry one entry per concrete ``<enumeratedValue>``.  Deferred
+    rows are placeholders for ``<enumeratedValues derivedFrom="…"/>``
+    blocks; the caller resolves them in a second pass once every
+    field's enum set has been collected.
+
+    A field may carry multiple ``<enumeratedValues>`` blocks —
+    typically one keyed ``<usage>read</usage>`` and one
+    ``<usage>write</usage>``.  Both row groups are emitted with
+    their respective usage tag so consumers can pick.
+    """
+    resolved: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+
+    for ev_block in field.findall("enumeratedValues"):
+        usage = _findtext(ev_block, "usage") or "read-write"
+        derived_from = ev_block.attrib.get("derivedFrom")
+        if derived_from:
+            deferred.append(
+                {
+                    "field_id": field_id,
+                    "peripheral": peripheral,
+                    "register_name": register_name,
+                    "field_name": field_name,
+                    "usage": usage,
+                    "_derived_from": derived_from,
+                    "_source_id": source_id,
+                    "_source_path": source_path,
+                }
+            )
+            continue
+        for ev in ev_block.findall("enumeratedValue"):
+            ev_name = _findtext(ev, "name")
+            ev_value = _parse_int(ev.findtext("value"))
+            description = _findtext(ev, "description")
+            if not ev_name or ev_value is None:
+                continue
+            resolved.append(
+                {
+                    "field_id": field_id,
+                    "peripheral": peripheral,
+                    "register_name": register_name,
+                    "field_name": field_name,
+                    "name": ev_name,
+                    "raw_value": ev_value,
+                    "description": description,
+                    "usage": usage,
+                    "provenance": _row_provenance(source_id, source_path),
+                }
+            )
+    return resolved, deferred
+
+
+def _resolve_derived_enumerations(
+    *,
+    deferred: list[dict[str, Any]],
+    enums_by_field_id: dict[str, list[dict[str, Any]]],
+    enums_by_field_name: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Resolve ``<enumeratedValues derivedFrom="…"/>`` placeholders.
+
+    ``derivedFrom`` paths in CMSIS-SVD come in three shapes:
+
+    * Fully-qualified ``PERIPH.REG.FIELD`` — look up by composing
+      a ``field_id`` from the segments.
+    * ``REG.FIELD`` (peripheral-relative) — look up under the
+      derived row's own peripheral.
+    * Bare ``FIELD`` — look up by field name within the same
+      register.
+
+    We try each form in order; first hit wins.  Missing references
+    are dropped silently — they're a small minority and the SVD's
+    XML schema doesn't strictly forbid them.
+    """
+    resolved_rows: list[dict[str, Any]] = []
+    for placeholder in deferred:
+        derived_from = placeholder["_derived_from"]
+        peripheral = placeholder["peripheral"]
+        register_name = placeholder["register_name"]
+        # Try (most-specific → least): full path → reg.field → bare field.
+        candidates: list[str] = []
+        parts = derived_from.split(".")
+        if len(parts) == 3:
+            candidates.append(
+                f"field:{parts[0].lower()}:{parts[1].lower()}:{parts[2].lower()}"
+            )
+        elif len(parts) == 2:
+            candidates.append(
+                f"field:{peripheral.lower()}:{parts[0].lower()}:{parts[1].lower()}"
+            )
+        elif len(parts) == 1:
+            candidates.append(
+                f"field:{peripheral.lower()}:{register_name.lower()}:{parts[0].lower()}"
+            )
+        # Also fall back to a name-only lookup so SVDs that elide
+        # the peripheral/register qualifier still resolve.
+        bare_field = parts[-1].lower()
+
+        base_rows: list[dict[str, Any]] | None = None
+        for candidate_id in candidates:
+            if candidate_id in enums_by_field_id:
+                base_rows = enums_by_field_id[candidate_id]
+                break
+        if base_rows is None:
+            base_rows = enums_by_field_name.get(bare_field)
+        if base_rows is None:
+            continue
+
+        usage = placeholder["usage"]
+        for row in base_rows:
+            resolved_rows.append(
+                {
+                    "field_id": placeholder["field_id"],
+                    "peripheral": placeholder["peripheral"],
+                    "register_name": placeholder["register_name"],
+                    "field_name": placeholder["field_name"],
+                    "name": row["name"],
+                    "raw_value": row["raw_value"],
+                    "description": row["description"],
+                    "usage": usage,
+                    "provenance": _row_provenance(
+                        placeholder["_source_id"],
+                        placeholder["_source_path"],
+                    ),
+                }
+            )
+    return resolved_rows
+
+
 def _register_and_field_records(
     root: ET.Element,
     *,
     source_id: str = "cmsis-svd",
     source_path: str = "",
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict]]:
     """Project the SVD register tree into flat ``registers`` +
-    ``register_fields`` lists.  Resolves ``derivedFrom`` (registers
-    from a base peripheral propagate to the derived one) and
-    inherits access/size from the parent peripheral when the
-    register itself doesn't override them.
+    ``register_fields`` + ``register_field_enumerations`` lists.
+
+    Resolves ``derivedFrom`` (registers from a base peripheral
+    propagate to the derived one) and inherits access/size from
+    the parent peripheral when the register itself doesn't
+    override them.  Each ``<field>``'s ``<enumeratedValues>``
+    blocks project as one row per concrete
+    ``<enumeratedValue>`` into the third return value, with
+    ``<usage>`` honored and ``derivedFrom`` references resolved
+    in a second pass.
 
     Each row carries an inline ``provenance`` block referencing
     the supplied ``source_id`` / ``source_path``.
     """
     peripherals_node = root.find("peripherals")
     if peripherals_node is None:
-        return [], []
+        return [], [], []
 
     # Index peripheral elements by name so we can resolve
     # derivedFrom to the base peripheral's <registers> block.
@@ -312,6 +459,8 @@ def _register_and_field_records(
 
     registers_out: list[dict] = []
     fields_out: list[dict] = []
+    enumerations_out: list[dict] = []
+    deferred_enumerations: list[dict[str, Any]] = []
 
     for peri in peripherals_node.findall("peripheral"):
         peri_name = _findtext(peri, "name")
@@ -377,12 +526,13 @@ def _register_and_field_records(
                     field_access = (
                         _findtext(field, "access") or reg_access
                     )
+                    field_id = (
+                        f"field:{peri_lower}:{reg_lower}:"
+                        f"{field_name.lower()}"
+                    )
                     fields_out.append(
                         {
-                            "field_id": (
-                                f"field:{peri_lower}:{reg_lower}:"
-                                f"{field_name.lower()}"
-                            ),
+                            "field_id": field_id,
                             "register_id": register_id,
                             "peripheral": peri_name,
                             "register_name": reg_name,
@@ -393,10 +543,40 @@ def _register_and_field_records(
                             "provenance": _row_provenance(source_id, source_path),
                         }
                     )
+                    resolved, deferred = _parse_field_enumerations(
+                        field,
+                        field_id=field_id,
+                        peripheral=peri_name,
+                        register_name=reg_name,
+                        field_name=field_name,
+                        source_id=source_id,
+                        source_path=source_path,
+                    )
+                    enumerations_out.extend(resolved)
+                    deferred_enumerations.extend(deferred)
+
+    # Resolve derivedFrom enumerations now that every concrete
+    # enum set has been collected.  Build two lookup indexes:
+    # * exact field_id ("field:adc1:smpr1:smp1")
+    # * field-name-only fallback ("smp1") for SVDs that elide
+    #   the peripheral/register qualifier in derivedFrom.
+    enums_by_field_id: dict[str, list[dict[str, Any]]] = {}
+    enums_by_field_name: dict[str, list[dict[str, Any]]] = {}
+    for row in enumerations_out:
+        enums_by_field_id.setdefault(row["field_id"], []).append(row)
+        enums_by_field_name.setdefault(row["field_name"].lower(), []).append(row)
+    enumerations_out.extend(
+        _resolve_derived_enumerations(
+            deferred=deferred_enumerations,
+            enums_by_field_id=enums_by_field_id,
+            enums_by_field_name=enums_by_field_name,
+        )
+    )
 
     # Sort deterministically — by (peripheral, register offset,
     # name) for registers; (peripheral, register, bit_offset) for
-    # fields.  Matches the canonical YAML's existing ordering.
+    # fields; (field_id, usage, raw_value) for enumerations.
+    # Matches the canonical YAML's existing ordering.
     registers_out.sort(
         key=lambda r: (r["peripheral"].lower(), r["offset_bytes"], r["name"].lower())
     )
@@ -407,7 +587,10 @@ def _register_and_field_records(
             f["bit_offset"],
         )
     )
-    return registers_out, fields_out
+    enumerations_out.sort(
+        key=lambda e: (e["field_id"], e["usage"], e["raw_value"])
+    )
+    return registers_out, fields_out, enumerations_out
 
 
 def extract_device(
@@ -436,8 +619,10 @@ def extract_device(
     peripherals, interrupts = _peripheral_records(
         root, source_id="cmsis-svd", source_path=row_source_path
     )
-    registers, register_fields = _register_and_field_records(
-        root, source_id="cmsis-svd", source_path=row_source_path
+    registers, register_fields, register_field_enumerations = (
+        _register_and_field_records(
+            root, source_id="cmsis-svd", source_path=row_source_path
+        )
     )
 
     payload: dict[str, Any] = {
@@ -460,6 +645,7 @@ def extract_device(
         "interrupts": interrupts,
         "registers": registers,
         "register_fields": register_fields,
+        "register_field_enumerations": register_field_enumerations,
     }
 
     return CmsisSvdExtraction(

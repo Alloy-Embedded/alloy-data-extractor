@@ -29,7 +29,10 @@ from jsonschema import Draft202012Validator
 #
 # 1.3.0 added (additive, optional) ``provenance.field_provenance``
 # under `add-cross-source-merge` (Phase 2.2).
-SCHEMA_VERSION_CURRENT = "1.3.0"
+# 1.4.0 added (additive, optional) ``register_field_enumerations``
+# under `complete-stm32-tier-coverage` (Phase 1) — projects every
+# SVD ``<field><enumeratedValues><enumeratedValue>`` row.
+SCHEMA_VERSION_CURRENT = "1.4.0"
 
 _SEMVER_RE = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
 
@@ -66,6 +69,7 @@ _TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "vector_slots",
     "registers",
     "register_fields",
+    "register_field_enumerations",
     "capabilities",
     "signal_endpoints",
     "route_requirements",

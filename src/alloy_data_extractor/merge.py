@@ -35,9 +35,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # Schema version produced by the merge engine.  When the merge
-# is invoked, the output payload's schema_version is bumped to
-# 1.3.0 so consumers know to expect ``provenance.field_provenance``.
-MERGED_SCHEMA_VERSION = "1.3.0"
+# is invoked, the output payload's schema_version is bumped so
+# consumers know which optional fields to expect.
+#
+# 1.3.0 added ``provenance.field_provenance``.
+# 1.4.0 added ``register_field_enumerations`` (the SVD enum
+# projection that powers tier-3 option-array derivation).
+MERGED_SCHEMA_VERSION = "1.4.0"
 
 
 @dataclass(frozen=True, slots=True)

@@ -262,7 +262,7 @@ def test_register_records_emit_canonical_register_id_keys(tmp_path: Path) -> Non
     import xml.etree.ElementTree as ET
 
     root = ET.parse(_register_tree_svd(tmp_path)).getroot()
-    registers, _ = _register_and_field_records(root)
+    registers, _, _ = _register_and_field_records(root)
     by_id = {r["register_id"]: r for r in registers}
     assert "register:usart1:cr1" in by_id
     assert "register:usart1:brr" in by_id
@@ -279,7 +279,7 @@ def test_register_records_resolve_derived_from(tmp_path: Path) -> None:
     import xml.etree.ElementTree as ET
 
     root = ET.parse(_register_tree_svd(tmp_path)).getroot()
-    registers, _ = _register_and_field_records(root)
+    registers, _, _ = _register_and_field_records(root)
     by_peri = {r["peripheral"] for r in registers}
     assert {"USART1", "USART2"}.issubset(by_peri)
     usart2_regs = [r for r in registers if r["peripheral"] == "USART2"]
@@ -291,7 +291,7 @@ def test_register_field_records_use_canonical_field_id(tmp_path: Path) -> None:
     import xml.etree.ElementTree as ET
 
     root = ET.parse(_register_tree_svd(tmp_path)).getroot()
-    _, fields = _register_and_field_records(root)
+    _, fields, _ = _register_and_field_records(root)
     by_id = {f["field_id"]: f for f in fields}
     assert "field:usart1:cr1:ue" in by_id
     assert by_id["field:usart1:cr1:ue"]["bit_offset"] == 0
@@ -354,7 +354,7 @@ def test_register_rows_carry_per_row_provenance(tmp_path: Path) -> None:
     import xml.etree.ElementTree as ET
 
     root = ET.parse(_register_tree_svd(tmp_path)).getroot()
-    registers, fields = _register_and_field_records(
+    registers, fields, _ = _register_and_field_records(
         root, source_id="cmsis-svd", source_path="rt.svd"
     )
     for reg in registers:
@@ -367,3 +367,247 @@ def test_register_rows_carry_per_row_provenance(tmp_path: Path) -> None:
         assert fld["provenance"]["source_id"] == "cmsis-svd"
         assert fld["provenance"]["source_path"] == "rt.svd"
         assert fld["provenance"]["patch_ids"] == []
+
+
+# ---------------------------------------------------------------------------
+# register_field_enumerations (complete-stm32-tier-coverage Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def _enum_svd(tmp_path: Path) -> Path:
+    """SVD covering: basic enum + multi-block (read+write usage) +
+    derivedFrom (peripheral-relative + bare-field forms) + an
+    enum on a derived peripheral that propagates through."""
+    text = textwrap.dedent("""\
+        <?xml version="1.0"?>
+        <device>
+          <name>EN</name>
+          <peripherals>
+            <peripheral>
+              <name>ADC1</name>
+              <baseAddress>0x40012400</baseAddress>
+              <size>32</size>
+              <access>read-write</access>
+              <registers>
+                <register>
+                  <name>CFGR1</name>
+                  <addressOffset>0x0C</addressOffset>
+                  <fields>
+                    <field>
+                      <name>RES</name>
+                      <bitOffset>3</bitOffset>
+                      <bitWidth>2</bitWidth>
+                      <enumeratedValues>
+                        <usage>read-write</usage>
+                        <enumeratedValue>
+                          <name>BITS12</name>
+                          <description>12-bit resolution</description>
+                          <value>0</value>
+                        </enumeratedValue>
+                        <enumeratedValue>
+                          <name>BITS10</name>
+                          <description>10-bit resolution</description>
+                          <value>1</value>
+                        </enumeratedValue>
+                        <enumeratedValue>
+                          <name>BITS8</name>
+                          <description>8-bit resolution</description>
+                          <value>2</value>
+                        </enumeratedValue>
+                        <enumeratedValue>
+                          <name>BITS6</name>
+                          <description>6-bit resolution</description>
+                          <value>3</value>
+                        </enumeratedValue>
+                      </enumeratedValues>
+                    </field>
+                    <field>
+                      <name>EXTSEL</name>
+                      <bitOffset>6</bitOffset>
+                      <bitWidth>3</bitWidth>
+                      <enumeratedValues>
+                        <usage>read</usage>
+                        <enumeratedValue>
+                          <name>READ_TIM1_TRGO</name>
+                          <value>0</value>
+                        </enumeratedValue>
+                      </enumeratedValues>
+                      <enumeratedValues>
+                        <usage>write</usage>
+                        <enumeratedValue>
+                          <name>WRITE_TIM1_TRGO</name>
+                          <value>0</value>
+                        </enumeratedValue>
+                      </enumeratedValues>
+                    </field>
+                  </fields>
+                </register>
+                <register>
+                  <name>SMPR1</name>
+                  <addressOffset>0x14</addressOffset>
+                  <fields>
+                    <field>
+                      <name>SMP1</name>
+                      <bitOffset>0</bitOffset>
+                      <bitWidth>3</bitWidth>
+                      <enumeratedValues>
+                        <enumeratedValue>
+                          <name>CYCLES_2_5</name>
+                          <value>0</value>
+                        </enumeratedValue>
+                        <enumeratedValue>
+                          <name>CYCLES_6_5</name>
+                          <value>1</value>
+                        </enumeratedValue>
+                      </enumeratedValues>
+                    </field>
+                    <field>
+                      <name>SMP2</name>
+                      <bitOffset>3</bitOffset>
+                      <bitWidth>3</bitWidth>
+                      <enumeratedValues derivedFrom="SMPR1.SMP1"/>
+                    </field>
+                    <field>
+                      <name>SMP3</name>
+                      <bitOffset>6</bitOffset>
+                      <bitWidth>3</bitWidth>
+                      <enumeratedValues derivedFrom="SMP1"/>
+                    </field>
+                  </fields>
+                </register>
+              </registers>
+            </peripheral>
+            <peripheral derivedFrom="ADC1">
+              <name>ADC2</name>
+              <baseAddress>0x40012800</baseAddress>
+            </peripheral>
+          </peripherals>
+        </device>
+    """)
+    path = tmp_path / "en.svd"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_enumerations_concrete_values_extracted(tmp_path: Path) -> None:
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(_enum_svd(tmp_path)).getroot()
+    _, _, enums = _register_and_field_records(
+        root, source_id="cmsis-svd", source_path="en.svd"
+    )
+    res_rows = [e for e in enums if e["field_id"] == "field:adc1:cfgr1:res"]
+    assert len(res_rows) == 4
+    by_value = {e["raw_value"]: e for e in res_rows}
+    assert by_value[0]["name"] == "BITS12"
+    assert by_value[0]["description"] == "12-bit resolution"
+    assert by_value[0]["usage"] == "read-write"
+    assert by_value[3]["name"] == "BITS6"
+
+
+def test_enumerations_honor_read_vs_write_usage(tmp_path: Path) -> None:
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(_enum_svd(tmp_path)).getroot()
+    _, _, enums = _register_and_field_records(
+        root, source_id="cmsis-svd", source_path="en.svd"
+    )
+    extsel_rows = [e for e in enums if e["field_id"] == "field:adc1:cfgr1:extsel"]
+    by_usage = {e["usage"]: e for e in extsel_rows}
+    assert "read" in by_usage and "write" in by_usage
+    assert by_usage["read"]["name"] == "READ_TIM1_TRGO"
+    assert by_usage["write"]["name"] == "WRITE_TIM1_TRGO"
+
+
+def test_enumerations_derived_from_relative_path_resolves(tmp_path: Path) -> None:
+    """`<enumeratedValues derivedFrom="SMPR1.SMP1"/>` on a sibling
+    field within the same peripheral SHALL pick up the base
+    field's row set."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(_enum_svd(tmp_path)).getroot()
+    _, _, enums = _register_and_field_records(
+        root, source_id="cmsis-svd", source_path="en.svd"
+    )
+    smp2_rows = [e for e in enums if e["field_id"] == "field:adc1:smpr1:smp2"]
+    assert len(smp2_rows) == 2
+    by_value = {e["raw_value"]: e for e in smp2_rows}
+    assert by_value[0]["name"] == "CYCLES_2_5"
+    assert by_value[1]["name"] == "CYCLES_6_5"
+
+
+def test_enumerations_derived_from_bare_name_falls_back(tmp_path: Path) -> None:
+    """`<enumeratedValues derivedFrom="SMP1"/>` (bare field name)
+    SHALL resolve via the by-name fallback index."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(_enum_svd(tmp_path)).getroot()
+    _, _, enums = _register_and_field_records(
+        root, source_id="cmsis-svd", source_path="en.svd"
+    )
+    smp3_rows = [e for e in enums if e["field_id"] == "field:adc1:smpr1:smp3"]
+    assert len(smp3_rows) == 2
+    by_value = {e["raw_value"]: e for e in smp3_rows}
+    assert by_value[0]["name"] == "CYCLES_2_5"
+
+
+def test_enumerations_propagate_via_derivedFrom_peripheral(tmp_path: Path) -> None:
+    """ADC2 derivedFrom ADC1 inherits the entire register tree —
+    the enumerations SHALL appear under both peripherals'
+    field_ids."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(_enum_svd(tmp_path)).getroot()
+    _, _, enums = _register_and_field_records(
+        root, source_id="cmsis-svd", source_path="en.svd"
+    )
+    field_ids = {e["field_id"] for e in enums}
+    assert "field:adc1:cfgr1:res" in field_ids
+    assert "field:adc2:cfgr1:res" in field_ids
+
+
+def test_enumeration_rows_carry_per_row_provenance(tmp_path: Path) -> None:
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(_enum_svd(tmp_path)).getroot()
+    _, _, enums = _register_and_field_records(
+        root, source_id="cmsis-svd", source_path="en.svd"
+    )
+    for row in enums:
+        assert row["provenance"] == {
+            "source_id": "cmsis-svd",
+            "source_path": "en.svd",
+            "patch_ids": [],
+        }
+
+
+def test_extract_device_includes_register_field_enumerations(sample_svd: Path) -> None:
+    """End-to-end: the canonical payload includes the new
+    top-level `register_field_enumerations` array even when the
+    fixture SVD ships no enums (empty list, key present)."""
+    result = extract_device(
+        vendor="acme",
+        family="acme1",
+        device="acme1xx",
+        svd_path=sample_svd,
+        revision="abc",
+    )
+    assert "register_field_enumerations" in result.payload
+    assert result.payload["register_field_enumerations"] == []
+
+
+def test_enumerations_sorted_deterministically(tmp_path: Path) -> None:
+    """Rows SHALL be sorted by (field_id, usage, raw_value) for
+    byte-stable YAML output across runs."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(_enum_svd(tmp_path)).getroot()
+    _, _, run1 = _register_and_field_records(
+        root, source_id="cmsis-svd", source_path="en.svd"
+    )
+    _, _, run2 = _register_and_field_records(
+        root, source_id="cmsis-svd", source_path="en.svd"
+    )
+    assert run1 == run2
+    keys = [(e["field_id"], e["usage"], e["raw_value"]) for e in run1]
+    assert keys == sorted(keys)

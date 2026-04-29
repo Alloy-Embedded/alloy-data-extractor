@@ -2,31 +2,42 @@
 
 ## Phase 1: SVD `<enumeratedValues>` projection (universal)
 
-- [ ] 1.1 Extend `cmsis_svd._register_and_field_records` to walk
-      every `<field><enumeratedValues><enumeratedValue>` block.
-      Build a flat `register_field_enumerations` list with
-      `(field_id, name, raw_value, description, provenance)`
-      rows, sorted by `(field_id, raw_value)`.
-- [ ] 1.2 Handle SVD's `<enumeratedValues derivedFrom="...">`
-      inheritance — derived enumeration sets reuse the base
-      set's rows under the derived field's `field_id`.
-- [ ] 1.3 Honor SVD's `<usage>` element on `<enumeratedValues>`
-      (`read`, `write`, `read-write`); when both read and write
-      enums exist, emit two separate row groups tagged with
-      `usage` so consumers can pick.
-- [ ] 1.4 Wire the new field into `extract_device()` payload
-      (top-level key `register_field_enumerations`) and add it
-      to the canonical-yaml `_TOP_LEVEL_KEY_ORDER` after
-      `register_fields`.
-- [ ] 1.5 Update the schema (`device.schema.json`) to declare
-      the optional `register_field_enumerations` array — minor
-      bump to `1.4.0` (additive optional).
-- [ ] 1.6 Tests: per-form (`<enumeratedValues>` with values,
-      with `derivedFrom`, with `<usage>`), against synthetic
-      SVD + against the cached `STM32G071.svd`.  Expected
-      counts: ≥ 500 enum rows for stm32g071.
-- [ ] 1.7 Verify the rp2040, esp32, mimxrt1062 extractions
-      still pass schema validation after the schema bump.
+- [x] 1.1 Extended `cmsis_svd._register_and_field_records` to
+      walk every `<field><enumeratedValues><enumeratedValue>`
+      block.  Added `_parse_field_enumerations()` helper.  Flat
+      `register_field_enumerations` list emitted with
+      `(field_id, peripheral, register_name, field_name, name,
+      raw_value, description, usage, provenance)` rows, sorted
+      by `(field_id, usage, raw_value)`.
+- [x] 1.2 Handled `<enumeratedValues derivedFrom="...">`
+      inheritance via a two-pass resolver
+      (`_resolve_derived_enumerations()`).  Three resolution
+      modes: full path `PERI.REG.FIELD`, peripheral-relative
+      `REG.FIELD`, and bare `FIELD` (name-only fallback).
+      Missing references drop silently.
+- [x] 1.3 Honored `<usage>` element on `<enumeratedValues>`.
+      Default `read-write`; `read` and `write` blocks emit two
+      separate row groups carrying their respective usage tag.
+- [x] 1.4 Wired `register_field_enumerations` into the
+      `extract_device()` payload and added it to
+      `_TOP_LEVEL_KEY_ORDER` after `register_fields`.
+- [x] 1.5 Bumped `SCHEMA_VERSION_CURRENT` 1.3.0 → 1.4.0
+      (additive, optional) + bumped `MERGED_SCHEMA_VERSION` to
+      match.  The bundled JSON schema in `alloy-devices-yml` is
+      permissive (`additionalProperties: true`) so it
+      auto-accepts the new field; no schema-file edit required.
+- [x] 1.6 Tests under `test_cmsis_svd_extractor.py` (8 new):
+      concrete enum extraction, read+write usage split, three
+      derivedFrom forms, derivedFrom-via-peripheral propagation,
+      per-row provenance, key-presence in the canonical
+      payload, deterministic sort.  Verified against the cached
+      `STM32G071.svd`: 559 enum rows.
+- [x] 1.7 Verified mimxrt1062 extraction still produces valid
+      payload — added bonus 29,739 enum rows from the NXP
+      SoC SVD (which annotates enums very thoroughly).
+      Full pytest suite: 251 passed / 2 skipped (was 243).
+      Merged stm32g071rb re-emit grows from 59,620 → 66,330
+      lines (90% of canonical's 73,410).
 
 ## Phase 2: stm32-tier secondary extractor
 

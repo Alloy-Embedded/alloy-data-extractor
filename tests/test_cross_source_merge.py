@@ -99,7 +99,9 @@ def test_merge_bumps_schema_version() -> None:
         policy=STM32_MERGE_POLICY,
     )
     assert result.payload["schema_version"] == MERGED_SCHEMA_VERSION
-    assert MERGED_SCHEMA_VERSION == "1.3.0"
+    # 1.4.0 added register_field_enumerations under
+    # complete-stm32-tier-coverage Phase 1.
+    assert MERGED_SCHEMA_VERSION == "1.4.0"
 
 
 def test_merge_records_contributing_sources() -> None:
