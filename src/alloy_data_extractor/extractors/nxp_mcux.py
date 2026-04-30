@@ -89,7 +89,7 @@ class NxpMcuxExtractor:
         payload = dict(legacy.payload)
         provenance = dict(payload.get("provenance", {}))
         provenance["source_id"] = "nxp-mcux"
-        provenance["source_path"] = str(svd_path)
+        provenance["source_path"] = svd_path.name  # basename for portability
         payload["provenance"] = provenance
 
         # Per-row provenance: rewrite the source_id stamped by the

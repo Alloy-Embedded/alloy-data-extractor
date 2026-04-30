@@ -123,6 +123,7 @@ class McuFacts:
     dma_versions: tuple[str, ...]
     pins: tuple[CubeMxPin, ...]
     peripheral_instances: tuple[CubeMxPeripheralInstance, ...]
+    package: str  # CubeMX `<Mcu Package="LQFP64">` — lower-cased
 
 
 # ---------------------------------------------------------------------------
@@ -225,9 +226,27 @@ def _match_mcu_xml(mcu_root: Path, device: str) -> Path | None:
                 break
     if not candidates:
         return None
-    # Deterministic pick: shortest filename wins (prefers the variant
-    # file over per-package singleton when both exist), then alpha.
-    candidates.sort(key=lambda p: (len(p.name), p.name))
+    # Deterministic pick.  Default to LQFP/TQFP packages (the
+    # most common ST package family) over BGA / QFN variants —
+    # matches the canonical alloy-devices-yml convention where
+    # stm32g071rb's package is `lqfp64`.  Within the same
+    # package family, prefer the shorter (multi-flash variant)
+    # file because it covers more chips.
+    def _package_priority(filename: str) -> int:
+        # Lower = higher priority.
+        if "Tx" in filename or "Hx" in filename:  # LQFP / TFBGA
+            return 0
+        if "Px" in filename:  # TSSOP
+            return 1
+        if "Ux" in filename:  # UFQFPN
+            return 2
+        if "Ix" in filename:  # UFBGA
+            return 3
+        if "Yx" in filename:  # WLCSP
+            return 4
+        return 5
+
+    candidates.sort(key=lambda p: (_package_priority(p.name), len(p.name), p.name))
     return candidates[0]
 
 
@@ -244,6 +263,7 @@ def _parse_mcu_xml(path: Path) -> McuFacts:
     family = root.attrib.get("Family", "")
     line = root.attrib.get("Line", "")
     clock_tree = root.attrib.get("ClockTree", "")
+    package = root.attrib.get("Package", "").lower()
 
     gpio_version = ""
     dma_versions: list[str] = []
@@ -298,6 +318,7 @@ def _parse_mcu_xml(path: Path) -> McuFacts:
         dma_versions=tuple(dma_versions),
         pins=tuple(pins),
         peripheral_instances=tuple(peripheral_instances),
+        package=package,
     )
 
 
@@ -588,6 +609,7 @@ def _cubemx_to_payload(
             "family": family,
             "device": device,
             "core": "",
+            "package": mcu.package,
         },
         "provenance": {
             "source_id": "stm32-cubemx",

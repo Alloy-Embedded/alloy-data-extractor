@@ -142,6 +142,9 @@ def _process_chip(
             source_paths={
                 "stm32": cmsis_svd_root,
                 "stm32-open-pin-data": open_pin_data_root,
+                # CubeMX path is optional but populates
+                # identity.package when staged.
+                "stm32cubemx-db": cubemx_db,
             },
             revision=revision,
         )

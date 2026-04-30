@@ -225,14 +225,25 @@ def merge_payloads(
         priority = policy.priority_for(field_name)
         value, src = _walk_field(payload_for_source, priority, field_name)
         if value is None:
-            # No source in policy supplies the field; fall back
-            # to whichever payload had it first.
+            # No source in policy supplies a non-empty value.
+            # Fall back: try non-empty values from any payload,
+            # then fall through to the first explicitly-supplied
+            # value (even empty) so canonical-schema required
+            # fields like `memories: []` survive the merge.
             for payload in (primary, *enrichments):
                 if field_name in payload and _is_non_empty(payload[field_name]):
                     value = payload[field_name]
                     src = _payload_source_id(payload)
                     break
-        if value is None:
+            else:
+                for payload in (primary, *enrichments):
+                    if field_name in payload:
+                        value = payload[field_name]
+                        src = _payload_source_id(payload)
+                        break
+        if value is None and field_name not in primary and not any(
+            field_name in e for e in enrichments
+        ):
             continue
         merged[field_name] = value
         field_provenance[field_name] = src or policy.primary_source_id

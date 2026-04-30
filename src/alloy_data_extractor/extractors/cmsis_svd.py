@@ -637,12 +637,22 @@ def extract_device(
         },
         "provenance": {
             "source_id": "cmsis-svd",
-            "source_path": str(svd_path),
+            # Basename only — environment-stable, matches the
+            # per-row provenance + the canonical YAML convention.
+            "source_path": svd_path.name,
             "patch_ids": [],
         },
+        # Canonical schema-required fields — emitted as empty
+        # lists when this primary extractor has nothing to say
+        # (e.g. CMSIS-SVD doesn't carry packages or pins; those
+        # come from CubeMX as enrichments and the merge engine
+        # routes them through STM32_MERGE_POLICY).
         "memories": [],
+        "packages": [],
+        "pins": [],
         "peripherals": peripherals,
         "interrupts": interrupts,
+        "dma_requests": [],
         "registers": registers,
         "register_fields": register_fields,
         "register_field_enumerations": register_field_enumerations,
@@ -653,7 +663,7 @@ def extract_device(
         provenance={
             "source_id": "cmsis-svd",
             "revision": revision,
-            "source_path": str(svd_path),
+            "source_path": svd_path.name,
         },
     )
 

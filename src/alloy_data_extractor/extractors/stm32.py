@@ -134,10 +134,13 @@ class Stm32Extractor:
         # extractions from generic CMSIS-SVD ones — both at the
         # top level and on every per-row provenance block stamped
         # by `_peripheral_records` / `_register_and_field_records`.
+        # Top-level source_path uses the SVD basename so the
+        # YAMLs are environment-stable (same convention as
+        # canonical alloy-devices-yml + as the per-row prov).
         payload = dict(legacy.payload)
         provenance = dict(payload.get("provenance", {}))
         provenance["source_id"] = "stm32"
-        provenance["source_path"] = str(svd_path)
+        provenance["source_path"] = svd_path.name
         payload["provenance"] = provenance
         for row_field in ("peripherals", "interrupts", "registers", "register_fields"):
             rows = payload.get(row_field, [])
@@ -146,14 +149,49 @@ class Stm32Extractor:
                 if isinstance(row_prov, dict):
                     row_prov["source_id"] = "stm32"
 
-        # Per-family core fallback: some STM32 SVDs omit the <cpu>
-        # element or name a CPU the cmsis-svd table doesn't resolve.
+        # Per-family core override: STM32 SVDs in cmsis-svd-data
+        # ship with stale CPU info — STM32G071's SVD declares
+        # `<name>CM0</name>` despite the chip being a Cortex-M0+
+        # part.  The curated `_FAMILY_TO_CORE` table is the
+        # authoritative answer per ST's reference manuals; let it
+        # win over whatever the SVD declares.
         identity = dict(payload.get("identity", {}))
-        if not identity.get("core"):
-            fallback = _FAMILY_TO_CORE.get(request.family)
-            if fallback:
-                identity["core"] = fallback
-                payload["identity"] = identity
+        family_core = _FAMILY_TO_CORE.get(request.family)
+        if family_core:
+            identity["core"] = family_core
+        elif not identity.get("core"):
+            identity["core"] = ""
+
+        # Optional package lookup from CubeMX MCU XML when the
+        # `stm32cubemx-db` source is staged alongside the SVD.
+        # The CubeMX `<Mcu Package="LQFP64">` attribute is the
+        # canonical answer.  The primary path doesn't *require*
+        # CubeMX; package falls through to "" when absent.
+        if "stm32cubemx-db" in request.source_paths:
+            try:
+                from alloy_data_extractor.extractors.stm32_cubemx import (
+                    _find_db_root,
+                    _match_mcu_xml,
+                    _parse_mcu_xml,
+                )
+
+                supplied = request.source_paths["stm32cubemx-db"]
+                roots = _find_db_root(supplied)
+                if roots is not None:
+                    mcu_root, _ = roots
+                    mcu_xml = _match_mcu_xml(mcu_root, request.device)
+                    if mcu_xml is not None:
+                        facts = _parse_mcu_xml(mcu_xml)
+                        if facts.package:
+                            identity["package"] = facts.package
+            except Exception:  # noqa: BLE001
+                # Best-effort enrichment — never fail the primary
+                # extraction because CubeMX lookup misbehaved.
+                pass
+
+        if identity.get("package") is None:
+            identity["package"] = ""
+        payload["identity"] = identity
 
         warnings: list[str] = []
         if not payload.get("registers"):
