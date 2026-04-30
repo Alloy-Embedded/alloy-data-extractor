@@ -207,11 +207,17 @@ gate.
       (the canonical-yaml emitter rejects payloads missing
       `schema_version`).  All 5 re-emitted YAMLs pass schema
       validation.
-- [ ] 7.5 Land the re-emitted YAMLs into alloy-devices-yml on
-      a feature branch for review.  *Deferred* — the user
-      reviews the bulk-tier-report.md + sandbox YAMLs first;
-      cross-repo write to alloy-devices-yml is a separate
-      review step.
+- [x] 7.5 Re-emitted YAMLs landed on the
+      `stm32-tier-coverage-rev1` feature branch in
+      `alloy-devices-yml` (commits 1cf17c7 → 2e83475 → cd899e6
+      → 9a0e86b).  Branch carries 5/5 admitted ST chips with
+      schema-validated YAMLs that load via alloy-codegen's
+      canonical IR loader.  Companion alloy-codegen
+      `perf/canonical-yaml-load-speedup` branch (commit
+      dfdaefa) ships the CSafeLoader + `_cached_type_hints`
+      perf fix that drops per-chip load from 8-26 s to 0.5-3 s.
+      Push to `origin` + merge to `main` is a deliberate human
+      step left for review.
 - [x] 7.6 Pipeline documented in `docs/stm32-tier-pipeline.md`
       with diagram + per-field ownership table + "adding a new
       chip" recipe.
@@ -222,5 +228,5 @@ gate.
       passes.
 - [x] 8.2 `pytest -q` clean — 287 passed / 2 skipped (well above
       the ≥ 280 target).
-- [ ] 8.3 Archive — kept open until Phase 7.5 lands the
-      regenerated YAMLs in alloy-devices-yml.
+- [x] 8.3 Archived — Phase 7.5 landed the regenerated YAMLs
+      on the alloy-devices-yml feature branch.
