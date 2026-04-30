@@ -72,6 +72,30 @@ speed_hz = 100_000
 name = "fast"
 speed_hz = 400_000
 
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0x0800_0000
+size_bytes = 1048576  # 1 MB max on F405/F407 — overridable per-device
+access = "rx"
+address_space = "code"
+
+[[memories]]
+name = "SRAM"
+kind = "sram"
+base_address = 0x2000_0000
+size_bytes = 196608  # 192 KB max on F405/F407 — overridable per-device
+access = "rwx"
+address_space = "data"
+
+[[memories]]
+name = "CCMRAM"
+kind = "sram"
+base_address = 0x1000_0000
+size_bytes = 65536  # 64 KB CCM RAM (F405/F407 only — overridable)
+access = "rwx"
+address_space = "data"
+
 [system_clock]
 
 [system_clock.post_reset_profile]

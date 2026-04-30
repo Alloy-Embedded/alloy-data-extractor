@@ -123,6 +123,7 @@ STM32_MERGE_POLICY = MergePolicy(
         # calibration ROM addresses + internal channel maps +
         # default system-clock profiles.  Authoritative for the
         # truly-hand-curated tier-2 fields.
+        "memories": ("stm32-overlay",),
         "adc_calibration_context": ("stm32-overlay",),
         "adc_calibration_data_points": ("stm32-overlay",),
         "adc_internal_channels": ("stm32-overlay",),

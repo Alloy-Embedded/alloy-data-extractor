@@ -98,6 +98,33 @@ name = "fast_plus"
 speed_hz = 1_000_000
 
 # ---------------------------------------------------------------------------
+# Memory regions
+# ---------------------------------------------------------------------------
+# STM32G0 family memory layout (DS13560 §3 / RM0444 §2.4) — every
+# G0 chip carries Cortex-M0+ default ARM memory map plus the
+# vendor-specific FLASH at 0x08000000 and SRAM at 0x20000000.
+# Per-device sizing lands in `devices/<chip>.toml` overrides;
+# the family default below covers the largest variant (g0b1
+# class).  Codegen's linker script picks the FLASH region for
+# .text and the SRAM region for .data/.bss.
+
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0x0800_0000
+size_bytes = 524288  # 512 KB max on STM32G0B1 — overridable per-device
+access = "rx"
+address_space = "code"
+
+[[memories]]
+name = "SRAM"
+kind = "sram"
+base_address = 0x2000_0000
+size_bytes = 147456  # 144 KB max on STM32G0B1 — overridable per-device
+access = "rwx"
+address_space = "data"
+
+# ---------------------------------------------------------------------------
 # System clock
 # ---------------------------------------------------------------------------
 

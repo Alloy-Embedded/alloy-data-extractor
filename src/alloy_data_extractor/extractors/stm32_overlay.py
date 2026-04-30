@@ -132,6 +132,16 @@ def _project_overlay(
     field-name to its row set."""
     payload: dict[str, Any] = {}
 
+    # Memory regions — required by alloy-codegen's linker-script
+    # emitter.  Each row carries (name, kind, base_address,
+    # size_bytes, access, address_space, provenance).
+    if "memories" in overlay_data:
+        payload["memories"] = _stamp_provenance(
+            list(overlay_data["memories"]),
+            source_path=source_path,
+            revision=revision,
+        )
+
     adc = overlay_data.get("adc") or {}
     if "max_clock_hz" in adc:
         payload["adc_max_clock_hz"] = adc["max_clock_hz"]
