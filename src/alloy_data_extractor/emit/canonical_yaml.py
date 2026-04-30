@@ -32,7 +32,12 @@ from jsonschema import Draft202012Validator
 # 1.4.0 added (additive, optional) ``register_field_enumerations``
 # under `complete-stm32-tier-coverage` (Phase 1) — projects every
 # SVD ``<field><enumeratedValues><enumeratedValue>`` row.
-SCHEMA_VERSION_CURRENT = "1.4.0"
+# 1.5.0 added (additive, optional) ``provenance_defaults`` map
+# under ``compact-canonical-yaml-and-cache-loads`` (Phase 2) —
+# hoists the dominant per-section ``provenance`` block out of the
+# rows so 5 936-row STM32 ``register_fields`` lists shrink ~30 %
+# without information loss.  Readers expand back at parse time.
+SCHEMA_VERSION_CURRENT = "1.5.0"
 
 _SEMVER_RE = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
 
@@ -57,6 +62,8 @@ _TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "schema_version",
     "identity",
     "provenance",
+    # Provenance dedup map (1.5.0).
+    "provenance_defaults",
     "memories",
     "packages",
     "package_pads",
@@ -147,8 +154,117 @@ def _ordered_top_level(payload: dict[str, Any]) -> dict[str, Any]:
     return ordered
 
 
+# ---------------------------------------------------------------------------
+# Per-section provenance dedup — Phase 2 of
+# ``compact-canonical-yaml-and-cache-loads``.
+# ---------------------------------------------------------------------------
+
+# Sections that historically carry per-row ``provenance`` blocks.
+# Mirrors the alloy-codegen
+# ``canonical_device_yaml._PROVENANCE_DEFAULT_SECTIONS`` set; kept
+# in sync by hand because alloy-data-extractor owns its own writer
+# (this module) and we'd rather not import the codegen helper here.
+_PROVENANCE_DEFAULT_SECTIONS: tuple[str, ...] = (
+    "memories",
+    "packages",
+    "package_pads",
+    "pin_constraints",
+    "pins",
+    "ip_blocks",
+    "peripherals",
+    "interrupts",
+    "interrupt_bindings",
+    "vector_slots",
+    "registers",
+    "register_fields",
+    "register_field_enumerations",
+    "capabilities",
+    "signal_endpoints",
+    "route_requirements",
+    "route_operations",
+    "connection_candidates",
+    "connection_groups",
+    "system_clock_profiles",
+    "clock_nodes",
+    "clock_selectors",
+    "clock_gates",
+    "resets",
+    "peripheral_clock_bindings",
+    "dma_controllers",
+    "dma_requests",
+    "dma_bindings",
+    "dma_routes",
+    "startup_descriptors",
+    "cubemx_peripherals",
+)
+
+
+def _compact_provenance_defaults(
+    payload: dict[str, Any],
+    *,
+    coverage_threshold: float = 0.5,
+) -> dict[str, Any]:
+    """For each row-list section, hoist the dominant
+    ``provenance`` block to ``payload['provenance_defaults']
+    [<section>]`` and drop it from rows whose provenance equals
+    the default.  Rows whose provenance differs keep their own
+    block.  Mutates ``payload`` in place AND returns it.
+
+    Skips sections whose dominant provenance covers less than
+    ``coverage_threshold`` of the section's rows — when there is
+    no clear winner, per-row blocks are cheaper than the
+    bookkeeping overhead.
+    """
+    from collections import Counter
+
+    if not isinstance(payload, dict):
+        return payload
+    defaults: dict[str, dict[str, Any]] = dict(
+        payload.get("provenance_defaults") or {},
+    )
+    for section_name in _PROVENANCE_DEFAULT_SECTIONS:
+        rows = payload.get(section_name)
+        if not isinstance(rows, list) or not rows:
+            continue
+        keyed: list[tuple[str, dict[str, Any]]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            prov = row.get("provenance")
+            if not isinstance(prov, dict):
+                continue
+            keyed.append((json.dumps(prov, sort_keys=True), prov))
+        if not keyed:
+            continue
+        counter: Counter[str] = Counter(k for k, _ in keyed)
+        top_key, top_count = counter.most_common(1)[0]
+        if top_count / len(rows) < coverage_threshold:
+            continue
+        top_obj = next(prov for k, prov in keyed if k == top_key)
+        defaults[section_name] = top_obj
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            prov = row.get("provenance")
+            if isinstance(prov, dict) and prov == top_obj:
+                row.pop("provenance")
+    if defaults:
+        payload["provenance_defaults"] = defaults
+    return payload
+
+
 def serialize(payload: dict[str, Any]) -> str:
-    """Render a canonical-IR payload as deterministic YAML."""
+    """Render a canonical-IR payload as deterministic YAML.
+
+    `compact-canonical-yaml-and-cache-loads` Phase 2: mutates
+    ``payload`` to hoist dominant per-row ``provenance`` blocks
+    into a top-level ``provenance_defaults`` map, dropping
+    ~30 % of bytes on a typical STM32 YAML.  The reader
+    (``alloy_codegen.canonical_device_yaml.parse_device``)
+    expands them back so the IR's row dataclasses see fully-
+    populated provenance fields.
+    """
+    _compact_provenance_defaults(payload)
     text = yaml.dump(
         _ordered_top_level(payload),
         Dumper=_CanonicalDumper,
