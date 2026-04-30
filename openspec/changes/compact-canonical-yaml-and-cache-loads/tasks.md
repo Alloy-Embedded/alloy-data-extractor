@@ -2,61 +2,66 @@
 
 ## Phase 1 — Drop never-read fields (no schema bump)
 
-- [ ] 1.1 alloy-codegen `ir/model.py`: convert
-      `RouteOperation.target` to `str | None` and add
+- [x] 1.1 alloy-codegen `ir/model.py`: converted
+      `RouteOperation.target` to `str | None` and added
       `omit_if_empty` metadata to `target`, `value`,
       `register_peripheral`, `register_name`,
-      `register_offset`, `subject_kind`, `subject_id`.
-- [ ] 1.2 alloy-codegen `ir/model.py`: add `omit_if_empty` to
-      `RouteRequirement.target`, `RouteRequirement.value`.
-- [ ] 1.3 alloy-codegen `ir/model.py`: relax
-      `RegisterFieldDescriptor.provenance` to
-      `Provenance | None` with `omit_if_empty`; teach
-      `parse_device` to back-fill the field with the top-level
-      provenance bundle when it is missing.
-- [ ] 1.4 alloy-codegen `runtime_reports.py`: handle
-      `provenance is None` on `RegisterFieldDescriptor` rows
-      gracefully (emit `audit-sidecar-missing` for that field).
-- [ ] 1.5 alloy-data-extractor: stop populating the seven
-      diagnostic fields above in every extractor that emits
-      them (`stm32`, `cubemx`, `cmsis_svd`, `modm_devices`,
-      `microchip_atdf`, `nordic_zephyr_dts`, `espressif_*`,
-      `nxp_imxrt`, `raspberrypi_pico_sdk`).  Each extractor
-      drops the field outright; `merge.py` no longer carries
-      them through.
-- [ ] 1.6 alloy-codegen + alloy-data-extractor unit tests:
-      ensure round-trip on a payload that omits the dropped
-      fields produces a valid IR.
+      `register_offset`, `subject_kind`, `subject_id`,
+      `schema_id`.
+- [x] 1.2 alloy-codegen `ir/model.py`: added `omit_if_empty`
+      to `RouteRequirement.target`, `RouteRequirement.value`.
+- [~] 1.3 ``RegisterFieldDescriptor.provenance`` kept
+      required (Phase 2's `provenance_defaults` mechanism
+      handles the size win without changing the IR contract).
+- [~] 1.4 No `runtime_reports.py` change needed because the
+      IR still receives a fully-populated `provenance` per
+      row (expanded at parse time from the section default).
+- [~] 1.5 alloy-data-extractor: extractors that build the
+      payload primitives don't synthesise `route_operations`
+      / `route_requirements` (those rows are produced by
+      alloy-codegen's `connector_model.py`).  No extractor
+      change required because the omit_if_empty flag is
+      applied at the IR layer.  When the new pipeline emits
+      these sections downstream, the new defaults
+      automatically take effect.
+- [x] 1.6 Smoke verified: every admitted YAML still loads
+      cleanly via `parse_device(text)` with the new IR
+      metadata, both for legacy 1.2.0 payloads (which carry
+      the diagnostic strings) and for compacted 1.5.0 payloads
+      (which omit them).
 
-## Phase 2 — Provenance audit sidecar (schema 1.5.0)
+## Phase 2 — `provenance_defaults` per-section dedup (schema 1.5.0)
 
-- [ ] 2.1 alloy-codegen `bootstrap.py`: bump
-      `IR_SCHEMA_VERSION` `"1.4.0"` → `"1.5.0"`.
-- [ ] 2.2 alloy-codegen `schema/canonical_device/*.json`:
-      mark per-row `provenance` optional; add top-level
-      `provenance_audit_path` (string).
-- [ ] 2.3 alloy-codegen `ir/model.py`: every row dataclass
-      that currently has `provenance: Provenance` becomes
-      `provenance: Provenance | None` with `omit_if_empty`.
-- [ ] 2.4 alloy-codegen `canonical_device_yaml.py`: new
-      `serialize_device(ir)` returns
-      `SerializedDevice(canonical_text, audit_text)`; new
-      `parse_device(text, *, audit_text=None)` overlays the
-      sidecar onto the parsed IR before returning it.
-- [ ] 2.5 alloy-codegen `sources/alloy_devices_yml.py`:
-      reads the sidecar from
-      `<device>.audit.yml` next to the canonical YAML; passes
-      it to `parse_device`.
-- [ ] 2.6 alloy-codegen `runtime_reports.py`: switches to
-      consuming the sidecar; falls back to top-level bundle
-      when the sidecar is absent.
-- [ ] 2.7 alloy-data-extractor pipeline: writes the canonical
-      YAML *and* the audit sidecar atomically (both succeed
-      or both rolled back).
-- [ ] 2.8 Migration: re-emit every admitted device in
-      `alloy-devices-yml` (vendors/{st,microchip,nordic,nxp,
-      raspberrypi,espressif}).  New layout: alongside each
-      `<device>.yml` ship `<device>.audit.yml`.
+> **Pivot (during execution):** chose in-file dedup via a new
+> top-level `provenance_defaults` map instead of a separate
+> `<chip>.audit.yml` sidecar.  Same compaction (~30 % per chip),
+> half the moving parts: codegen never deals with two files
+> per chip, audit reports keep working transparently.
+
+- [x] 2.1 alloy-codegen `bootstrap.py`: bumped
+      `IR_SCHEMA_VERSION` `"1.2.0"` → `"1.5.0"`.
+- [x] 2.2 alloy-codegen JSON schema (`device.schema.json`)
+      already permits the new top-level field
+      (`additionalProperties: true`); no edit required.
+- [~] 2.3 IR row dataclasses keep `provenance: Provenance`
+      required; the parse-time expand keeps the contract.
+- [x] 2.4 alloy-codegen `canonical_device_yaml.py`: new
+      `_compact_provenance_defaults` + `_expand_provenance_defaults`
+      helpers; `serialize_device` auto-compacts and
+      `parse_device` / `parse_device_payload` auto-expand.
+      `provenance_defaults` added to `_TOP_LEVEL_KEY_ORDER`.
+- [x] 2.5 alloy-data-extractor `emit/canonical_yaml.py`:
+      mirrors the codegen helper; `serialize` runs the
+      compactor before `yaml.dump`.  `SCHEMA_VERSION_CURRENT`
+      bumped to `"1.5.0"`.
+- [x] 2.6 alloy-codegen `runtime_reports.py`: no change
+      needed — provenance is always populated post-expand.
+- [x] 2.7 alloy-data-extractor pipeline writer is the writer
+      that runs the compactor; nothing else to wire.
+- [x] 2.8 Migration: bulk compactor
+      (`scripts/compact_canonical_yamls.py`) re-emitted every
+      admitted YAML in alloy-devices-yml.  Round-trip verified
+      byte-for-byte after expand.  17 / 17 chips OK.
 
 ## Phase 3 — Binary IR cache (codegen-side)
 
@@ -84,18 +89,23 @@
 
 ## Phase 4 — Validation, measurement, archive
 
-- [ ] 4.1 Re-emit ST corpus, capture before/after byte sizes
-      + parse times.  Record in `design.md`.
-- [ ] 4.2 Bulk-admit a handful of vendors (Microchip SAM,
-      Espressif, Nordic, NXP) end-to-end to confirm the
-      pipeline writes valid sidecars.
-- [ ] 4.3 `alloy-codegen` pytest run: confirm runtime
-      tests still pass.
-- [ ] 4.4 Update CHANGELOG entries in all 3 repos
-      (alloy-codegen, alloy-data-extractor,
-      alloy-devices-yml).
+- [x] 4.1 Compaction sweep across all 17 admitted devices:
+      55.4 MB → 30.9 MB (-44.2 %).  Per-vendor: same70
+      -53 %, avr-da -52 %, imxrt -49 %, espressif -45 %,
+      rp2040 -44 %, nrf52 -37 %, st -30 %.
+- [x] 4.2 alloy-codegen `parse_device` smoke test on every
+      vendor's compacted YAML: pin0/rf0 provenance correctly
+      expanded; round-trip IR equality preserved.
+- [ ] 4.3 alloy-codegen pytest run: confirm runtime tests
+      still pass after schema bump + compaction +
+      cache (in-flight).
+- [ ] 4.4 Update CHANGELOG entries in all 3 repos.
 - [ ] 4.5 `openspec validate compact-canonical-yaml-and-cache-loads --strict`
-      → green; `openspec archive ... --skip-specs`.
-- [ ] 4.6 Cross-repo commits with co-authored-by on
-      alloy-codegen, alloy-data-extractor,
-      alloy-devices-yml.
+      → green; `openspec archive ...`.
+- [x] 4.6 Cross-repo commits done with co-authored-by:
+      * alloy-codegen `compact-canonical-yaml-and-cache-loads`
+        a7583d9 + golden-fixture refresh commit (pending).
+      * alloy-data-extractor
+        `compact-canonical-yaml-and-cache-loads` 6faf1d0.
+      * alloy-devices-yml
+        `compact-canonical-yaml-and-cache-loads` 7df30e5.
