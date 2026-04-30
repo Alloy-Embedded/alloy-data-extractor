@@ -168,57 +168,41 @@ def _project_overlay(
     i2c = overlay_data.get("i2c") or {}
     if "max_clock_hz" in i2c:
         payload["i2c_max_clock_hz"] = i2c["max_clock_hz"]
-    if "speed_options" in i2c:
-        # Each row carries (name, speed_hz) — stamp provenance.
-        payload["i2c_speed_options"] = _stamp_provenance(
-            list(i2c["speed_options"]),
-            source_path=source_path,
-            revision=revision,
-        )
+    # `i2c_speed_options` per-instance is owned by stm32-tier (which
+    # has access to the CubeMX peripheral list).  The overlay
+    # carries the family-level speed list for the I2C-timing
+    # cross-product computation but doesn't emit speed_options
+    # rows itself anymore.
 
     system_clock = overlay_data.get("system_clock") or {}
     profiles: list[dict[str, Any]] = []
     if "post_reset_profile" in system_clock:
         post_reset = dict(system_clock["post_reset_profile"])
+        # Canonical SystemClockProfile shape requires profile_id +
+        # source_kind alongside kind / sysclk_hz.
+        post_reset.setdefault("profile_id", post_reset.get("name", "post-reset"))
         post_reset["kind"] = "post-reset"
+        post_reset["source_kind"] = post_reset.get("source", "unknown")
         profiles.append(post_reset)
     for recommended in system_clock.get("recommended_profiles", []) or []:
         row = dict(recommended)
+        row.setdefault("profile_id", row.get("name", "recommended"))
         row["kind"] = "recommended"
+        row["source_kind"] = row.get("source", "unknown")
         profiles.append(row)
     if profiles:
         payload["system_clock_profiles"] = _stamp_provenance(
             profiles, source_path=source_path, revision=revision
         )
 
-    # Phase 6 — i2c_timing_presets computed from the (speeds ×
-    # sysclk profiles) cross product when both inputs are
-    # available.  Pure derivation; no new data — uses the
-    # ST AN4235 formula in stm32_i2c_timing.compute_i2c_timing_preset.
-    if i2c.get("speed_options") and profiles:
-        speeds = [opt["speed_hz"] for opt in i2c["speed_options"]]
-        sysclks = sorted({p["sysclk_hz"] for p in profiles})
-        timing_presets = compute_i2c_timing_presets_for_speeds_and_clocks(
-            speeds_hz=speeds, source_clocks_hz=sysclks
-        )
-        payload["i2c_timing_presets"] = _stamp_provenance(
-            [
-                {
-                    "speed_hz": preset.speed_hz,
-                    "source_clock_hz": preset.source_clock_hz,
-                    "presc": preset.presc,
-                    "sdadel": preset.sdadel,
-                    "scldel": preset.scldel,
-                    "sclh": preset.sclh,
-                    "scll": preset.scll,
-                    "timingr": preset.timingr_value,
-                }
-                for preset in timing_presets
-            ],
-            source_path=source_path,
-            revision=revision,
-        )
-
+    # Phase 6 — i2c_timing_presets computed from the (peripheral
+    # × speeds × sysclk profiles) cross product when all three
+    # inputs are available.  The overlay reads the per-chip I2C
+    # instance list from the merge engine's primary payload via
+    # the helper-attached `_overlay_instances` parameter (passed
+    # in by the extractor's `extract` method when CubeMX is
+    # staged).  Without instance info, the timing presets aren't
+    # emitted (the merge engine then accepts the empty default).
     return payload
 
 
@@ -307,6 +291,57 @@ class Stm32OverlayExtractor:
         projected = _project_overlay(
             merged_data, source_path=primary_path, revision=request.revision
         )
+
+        # Phase 6 — i2c_timing_presets per-instance.  Reads CubeMX
+        # MCU XML when `stm32cubemx-db` is staged so we can fan
+        # out timing presets per real I2C instance (canonical
+        # I2cTimingPresetPatch shape: peripheral / speed_hz /
+        # source_clock_hz / timingr_value).
+        i2c_speeds = [opt["speed_hz"] for opt in merged_data.get("i2c", {}).get("speed_options", [])]
+        sysclk_profiles = projected.get("system_clock_profiles", [])
+        sysclk_freqs = sorted({p["sysclk_hz"] for p in sysclk_profiles}) if sysclk_profiles else []
+        i2c_instances: list[str] = []
+        if "stm32cubemx-db" in request.source_paths:
+            try:
+                from alloy_data_extractor.extractors.stm32_cubemx import (
+                    _find_db_root,
+                    _match_mcu_xml,
+                    _parse_mcu_xml,
+                )
+
+                supplied = request.source_paths["stm32cubemx-db"]
+                roots = _find_db_root(supplied)
+                if roots is not None:
+                    mcu_root, _ = roots
+                    mcu_xml = _match_mcu_xml(mcu_root, request.device)
+                    if mcu_xml is not None:
+                        facts = _parse_mcu_xml(mcu_xml)
+                        i2c_instances = [
+                            p.instance_name
+                            for p in facts.peripheral_instances
+                            if p.ip_name == "I2C"
+                        ]
+            except Exception:  # noqa: BLE001
+                pass
+
+        if i2c_instances and i2c_speeds and sysclk_freqs:
+            timing_presets = compute_i2c_timing_presets_for_speeds_and_clocks(
+                speeds_hz=i2c_speeds, source_clocks_hz=sysclk_freqs
+            )
+            projected["i2c_timing_presets"] = _stamp_provenance(
+                [
+                    {
+                        "peripheral": instance,
+                        "speed_hz": preset.speed_hz,
+                        "source_clock_hz": preset.source_clock_hz,
+                        "timingr_value": preset.timingr_value,
+                    }
+                    for instance in sorted(i2c_instances)
+                    for preset in timing_presets
+                ],
+                source_path=primary_path,
+                revision=request.revision,
+            )
 
         payload: dict[str, Any] = {
             "schema_version": "1.4.0",

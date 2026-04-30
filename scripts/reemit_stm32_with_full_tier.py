@@ -185,7 +185,10 @@ def _process_chip(
                 vendor="st",
                 family=family,
                 device=device,
-                source_paths={},
+                # Overlay needs CubeMX to fan out i2c_timing_presets
+                # per-instance.  Without this source path the
+                # timing presets stay empty.
+                source_paths={"stm32cubemx-db": cubemx_db},
                 revision=revision,
             )
         ).payload

@@ -86,6 +86,7 @@ STM32_MERGE_POLICY = MergePolicy(
         # mostly mirror this; they fall back when open-pin-data
         # doesn't ship the chip yet.
         "pins": ("stm32-open-pin-data", "stm32-cubemx", "modm-devices", "stm32"),
+        "packages": ("stm32-cubemx",),
         "package_pads": ("stm32-open-pin-data", "stm32-cubemx", "stm32"),
         "clock_nodes": ("modm-devices", "stm32-cubemx", "stm32"),
         "clock_selectors": ("modm-devices", "stm32-cubemx", "stm32"),

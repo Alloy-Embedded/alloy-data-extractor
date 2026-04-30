@@ -162,11 +162,13 @@ class Stm32Extractor:
         elif not identity.get("core"):
             identity["core"] = ""
 
-        # Optional package lookup from CubeMX MCU XML when the
+        # Optional CubeMX MCU XML enrichment when the
         # `stm32cubemx-db` source is staged alongside the SVD.
-        # The CubeMX `<Mcu Package="LQFP64">` attribute is the
-        # canonical answer.  The primary path doesn't *require*
-        # CubeMX; package falls through to "" when absent.
+        # We pull (a) `<Mcu Package>` for identity.package and
+        # (b) per-instance `<IP Name="USART" Version="…"
+        # InstanceName="USART1">` for peripherals[*].ip_name /
+        # ip_version / instance — the canonical PeripheralInstance
+        # shape alloy-codegen's IR loader requires.
         if "stm32cubemx-db" in request.source_paths:
             try:
                 from alloy_data_extractor.extractors.stm32_cubemx import (
@@ -184,6 +186,18 @@ class Stm32Extractor:
                         facts = _parse_mcu_xml(mcu_xml)
                         if facts.package:
                             identity["package"] = facts.package
+                        # Index per-instance IP info for
+                        # peripherals enrichment.
+                        ip_by_instance: dict[str, tuple[str, str]] = {}
+                        for peri_instance in facts.peripheral_instances:
+                            ip_by_instance[peri_instance.instance_name] = (
+                                peri_instance.ip_name.lower(),
+                                peri_instance.ip_version,
+                            )
+                        for peri_row in payload.get("peripherals", []):
+                            ip_info = ip_by_instance.get(peri_row["name"])
+                            if ip_info is not None:
+                                peri_row["ip_name"], peri_row["ip_version"] = ip_info
             except Exception:  # noqa: BLE001
                 # Best-effort enrichment — never fail the primary
                 # extraction because CubeMX lookup misbehaved.

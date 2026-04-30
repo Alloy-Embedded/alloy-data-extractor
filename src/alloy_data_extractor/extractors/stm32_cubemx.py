@@ -538,41 +538,77 @@ def _cubemx_to_payload(
     projection so the merge engine can fold either source onto a
     primary STM32 payload uniformly.
     """
-    # Pins: aggregate AF rows per canonical pin name.  We look up
-    # pin name canonicalization through the MCU XML's <Pin> list so
-    # that orphan pins (no AF rows) still surface — they're useful
-    # for package-pad coverage.
-    pin_to_afs: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    # Per-row provenance for canonical-IR rows.
+    pin_provenance = {
+        "source_id": "stm32-cubemx",
+        "source_path": str(getattr(mcu, "ref_name", "")) + ".xml",
+        "patch_ids": [],
+    }
+
+    # Pins: aggregate AF rows per canonical pin name in canonical
+    # PinDefinition shape — `name`, `port`, `number`, `signals[]`,
+    # `provenance`.  Each signal carries the canonical PinSignal
+    # shape: `function`, `peripheral`, `signal`, `af_number`,
+    # `provenance`.
+    pin_to_signals: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in af_rows:
-        pin_to_afs[row.pin].append(
+        pin_to_signals[row.pin].append(
             {
-                "af": row.af_number,
+                "function": "alternate-function",
                 "peripheral": row.peripheral,
                 "signal": row.signal,
+                "af_number": row.af_number,
+                "provenance": dict(pin_provenance),
             }
         )
-    # Add MCU-XML pin entries that didn't appear in the AF table —
-    # power pins, NRST, BOOT0, etc. — so the merge engine sees the
-    # full package's pinout when CubeMX is the AF authority.
     for pin in mcu.pins:
         canonical = _canonical_pin_name(pin.name)
-        if canonical and canonical not in pin_to_afs:
-            pin_to_afs[canonical] = []
-    pins = [
-        {"name": pin_name, "alternate_functions": tuple(afs)}
-        for pin_name, afs in sorted(pin_to_afs.items())
-    ]
+        if canonical and canonical not in pin_to_signals:
+            pin_to_signals[canonical] = []
+    pins: list[dict[str, Any]] = []
+    for pin_name, signals in sorted(pin_to_signals.items()):
+        port_match = _PIN_NAME_RE.match(pin_name)
+        port = port_match.group(1) if port_match else None
+        number = int(port_match.group(2)) if port_match else 0
+        pins.append(
+            {
+                "name": pin_name,
+                "port": port,
+                "number": number,
+                "signals": tuple(signals),
+                "provenance": dict(pin_provenance),
+            }
+        )
 
-    # DMA requests: one entry per (peripheral, signal) tuple.
+    # DMA requests: canonical DmaRequestDefinition shape — every
+    # row carries `controller`, `request_line`, `peripheral`,
+    # `signal`, `provenance` plus optional `channel_index` /
+    # `request_value` / `channel_selector`.
     dma_payload = [
         {
+            "controller": "DMAMUX",  # CubeMX names the request mux DMAMUX1 on G0/H7
+            "request_line": d.request_name,
             "peripheral": d.peripheral,
             "signal": d.signal,
-            "request_id": d.request_id,
-            "request_name": d.request_name,
+            "request_value": d.request_id,
+            "provenance": dict(pin_provenance),
         }
         for d in dma_requests
     ]
+
+    # Packages: one row per CubeMX package variant.  We have a
+    # single MCU XML loaded so the package count is 1; other
+    # variants would surface as additional rows when those XMLs
+    # are loaded.
+    packages_payload: list[dict[str, Any]] = []
+    if mcu.package:
+        packages_payload.append(
+            {
+                "name": mcu.package,
+                "pin_count": len(mcu.pins),
+                "provenance": dict(pin_provenance),
+            }
+        )
 
     # Clock nodes: include every parsed Element id.  Selectors are
     # the subset of nodes that have multiple incoming edges — same
@@ -582,9 +618,32 @@ def _cubemx_to_payload(
         if edge.source not in incoming[edge.target]:
             incoming[edge.target].append(edge.source)
 
-    nodes_payload = [{"id": node.id, "kind": node.kind} for node in clock_nodes]
+    cubemx_provenance = {
+        "source_id": "stm32-cubemx",
+        "source_path": str(getattr(mcu, "ref_name", "")) + ".xml",
+        "patch_ids": [],
+    }
+    # Canonical ClockNodeLite shape: node_id / kind / parent /
+    # selector / provenance.  Per-target parents come from the
+    # incoming-edge table; selector is the same as node_id when
+    # it has multiple parents.
+    nodes_payload = [
+        {
+            "node_id": node.id,
+            "kind": node.kind,
+            "parent": (incoming.get(node.id) or [None])[0],
+            "selector": node.id if len(incoming.get(node.id, [])) > 1 else None,
+            "provenance": dict(cubemx_provenance),
+        }
+        for node in clock_nodes
+    ]
     selectors_payload = [
-        {"id": target, "parent_options": tuple(sources)}
+        {
+            "selector_id": target,
+            "parent_options": tuple(sources),
+            "register_target": None,
+            "provenance": dict(cubemx_provenance),
+        }
         for target, sources in sorted(incoming.items())
         if len(sources) > 1
     ]
@@ -622,6 +681,7 @@ def _cubemx_to_payload(
         "clock_selectors": selectors_payload,
         "dma_requests": dma_payload,
         "pins": pins,
+        "packages": packages_payload,
         "cubemx_peripherals": cubemx_peripherals,
     }
 

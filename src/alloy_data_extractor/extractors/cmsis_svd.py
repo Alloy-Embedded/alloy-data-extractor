@@ -94,6 +94,23 @@ def _row_provenance(source_id: str, source_path: str) -> dict[str, Any]:
     }
 
 
+_PERIPHERAL_INSTANCE_RE = re.compile(r"^([A-Za-z_]+?)(\d+)$")
+
+
+def _peripheral_canonical_keys(name: str) -> tuple[str, int]:
+    """Split ``USART1`` → ``("usart", 1)``, ``ADC`` → ``("adc", 0)``.
+
+    Used to derive the canonical IR's ``ip_name`` (lowercase peri
+    class) and ``instance`` (numeric suffix) when no other source
+    supplies them.  Suffix-less names (``CRC``, ``RCC``) get
+    instance 0.
+    """
+    match = _PERIPHERAL_INSTANCE_RE.match(name)
+    if match:
+        return match.group(1).lower(), int(match.group(2))
+    return name.lower(), 0
+
+
 def _peripheral_records(
     root: ET.Element,
     *,
@@ -113,10 +130,23 @@ def _peripheral_records(
         base = _parse_int(peripheral.findtext("baseAddress"))
         if not name or base is None:
             continue
+        ip_name, instance = _peripheral_canonical_keys(name)
         peripherals.append(
             {
+                # Canonical PeripheralInstance shape — every row
+                # carries the fields alloy-codegen's IR loader
+                # requires.  ip_version / rcc_*/ backend_schema_id
+                # default to None; downstream extractors (CubeMX
+                # for ip_version, RCC SVD walker for clock gates)
+                # can layer richer values via the merge engine.
                 "name": name,
+                "ip_name": ip_name,
+                "ip_version": None,
+                "instance": instance,
                 "base_address": base,
+                "rcc_enable_signal": None,
+                "rcc_reset_signal": None,
+                "backend_schema_id": None,
                 "description": _findtext(peripheral, "description"),
                 "provenance": _row_provenance(source_id, source_path),
             }

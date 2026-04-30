@@ -142,11 +142,14 @@ def test_project_overlay_emits_canonical_fields(tmp_path: Path) -> None:
     assert cal_rows[0]["provenance"]["source_path"] == "family.toml"
     # Internal channels.
     assert payload["adc_internal_channels"][0]["kind"] == "vrefint"
-    # I2C speed_options.
-    assert payload["i2c_speed_options"][0]["speed_hz"] == 100_000
-    # System clock profiles tagged with kind.
+    # I2C speed_options moved to stm32-tier (per-instance fan-out
+    # needs the CubeMX peripheral list); overlay no longer emits.
+    assert "i2c_speed_options" not in payload
+    # System clock profiles carry canonical SystemClockProfile shape.
     profiles = payload["system_clock_profiles"]
     assert profiles[0]["kind"] == "post-reset"
+    assert profiles[0]["profile_id"] == "default-hsi-16mhz"
+    assert profiles[0]["source_kind"] == "HSI"
 
 
 def test_extractor_resolves_real_stm32g0_overlay() -> None:
@@ -171,7 +174,9 @@ def test_extractor_resolves_real_stm32g0_overlay() -> None:
     }
     assert payload["uart_max_baud_hz"] == 4_000_000
     assert payload["i2c_max_clock_hz"] == 1_000_000
-    assert len(payload["i2c_speed_options"]) == 3
+    # i2c_speed_options moved to stm32-tier — no longer in
+    # overlay output.
+    assert "i2c_speed_options" not in payload
 
 
 def test_extractor_does_not_win_resolver() -> None:
@@ -270,28 +275,31 @@ def test_overlay_emits_i2c_timing_presets_when_speeds_and_profiles_present(
         revision="r",
     )
     payload = ext.extract(request).payload
-    presets = payload["i2c_timing_presets"]
-    assert len(presets) == 1  # 1 speed × 1 sysclk
-    p = presets[0]
-    assert p["speed_hz"] == 100_000
-    assert p["source_clock_hz"] == 16_000_000
-    # Provenance stamped.
-    assert p["provenance"]["source_id"] == "stm32-overlay"
+    # i2c_timing_presets only emit when CubeMX is staged so the
+    # overlay can fan out per-instance.  This synthetic-overlay
+    # path has no CubeMX — presets stay empty.
+    assert payload.get("i2c_timing_presets", []) == []
 
 
 def test_overlay_real_stm32g0_emits_i2c_timing_cross_product() -> None:
-    """Bundled stm32g0/family.toml has 3 i2c.speed_options + 2
-    system_clock_profiles → 6 i2c_timing_presets emitted."""
+    """When stm32cubemx-db is staged, the overlay fans out
+    timing presets per I2C instance × speeds × sysclks.
+    stm32g071rb has I2C1+I2C2 (2) × 3 speeds × 2 sysclks = 12 rows."""
+    cubemx_db = Path(
+        "/Applications/STMicroelectronics/STM32CubeMX.app/Contents/Resources/db"
+    )
+    if not cubemx_db.exists():
+        pytest.skip(f"STM32CubeMX not installed at {cubemx_db}")
     ext = resolve_extractor_by_id("stm32-overlay")
     request = ExtractionRequest(
         vendor="st",
         family="stm32g0",
         device="stm32g071rb",
-        source_paths={},
+        source_paths={"stm32cubemx-db": cubemx_db},
         revision="r",
     )
     payload = ext.extract(request).payload
     presets = payload.get("i2c_timing_presets", [])
-    assert len(presets) == 6  # 3 speeds × 2 sysclks
-    speeds = sorted({p["speed_hz"] for p in presets})
-    assert speeds == [100_000, 400_000, 1_000_000]
+    assert len(presets) == 12  # 2 instances × 3 speeds × 2 sysclks
+    instances = {p["peripheral"] for p in presets}
+    assert instances == {"I2C1", "I2C2"}

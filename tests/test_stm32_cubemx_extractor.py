@@ -285,24 +285,31 @@ def test_extractor_payload_carries_pins_dma_clocks(tmp_path: Path) -> None:
     assert "stm32-cubemx@cubemx-v6.17" in payload["provenance"]["patch_ids"]
     assert payload["identity"]["device"] == "stm32g071rb"
 
-    # Pins: AF-bearing pins surface their AF entries; pinout-only
-    # pins (PC14) still appear with an empty alternate_functions list.
+    # Pins: AF-bearing pins carry canonical PinSignal rows
+    # (function/peripheral/signal/af_number/provenance); pinout-
+    # only pins (PC14) still appear with an empty signals tuple.
     pins_by_name = {p["name"]: p for p in payload["pins"]}
-    pa9_afs = list(pins_by_name["PA9"]["alternate_functions"])
-    assert {"af": 1, "peripheral": "USART1", "signal": "TX"} in pa9_afs
-    assert pins_by_name["PA10"]["alternate_functions"][0]["signal"] == "RX"
-    assert pins_by_name["PC14"]["alternate_functions"] == ()
+    pa9_signals = list(pins_by_name["PA9"]["signals"])
+    pa9_pairs = {(s["af_number"], s["peripheral"], s["signal"]) for s in pa9_signals}
+    assert (1, "USART1", "TX") in pa9_pairs
+    assert pins_by_name["PA9"]["port"] == "A"
+    assert pins_by_name["PA9"]["number"] == 9
+    assert pins_by_name["PA10"]["signals"][0]["signal"] == "RX"
+    assert pins_by_name["PC14"]["signals"] == ()
 
-    # DMA: enumeration with indexed request_id.
+    # DMA: canonical DmaRequestDefinition shape.
     dma = payload["dma_requests"]
     by_signal = {(d["peripheral"], d["signal"]): d for d in dma}
-    assert by_signal[("USART1", "TX")]["request_id"] == 3
-    assert by_signal[("USART1", "TX")]["request_name"] == "DMA_REQUEST_USART1_TX"
+    assert by_signal[("USART1", "TX")]["request_value"] == 3
+    assert by_signal[("USART1", "TX")]["request_line"] == "DMA_REQUEST_USART1_TX"
+    assert by_signal[("USART1", "TX")]["controller"] == "DMAMUX"
 
-    # Clock tree: nodes + selector for SysClkSource.
-    nodes_by_id = {n["id"]: n for n in payload["clock_nodes"]}
+    # Clock tree: nodes + selector for SysClkSource (canonical
+    # ClockNodeLite shape: node_id / kind / parent / selector /
+    # provenance).
+    nodes_by_id = {n["node_id"]: n for n in payload["clock_nodes"]}
     assert nodes_by_id["HSIRC"]["kind"] == "oscillator"
-    selectors_by_id = {s["id"]: s for s in payload["clock_selectors"]}
+    selectors_by_id = {s["selector_id"]: s for s in payload["clock_selectors"]}
     assert "SysClkSource" in selectors_by_id
     assert set(selectors_by_id["SysClkSource"]["parent_options"]) == {
         "HSIRC",
@@ -382,7 +389,10 @@ def test_extract_against_real_cubemx_db(
     assert len(payload["pins"]) >= min_pins
     # At least one pin carries a USART AF entry on each of these.
     has_usart_af = any(
-        any(af["peripheral"].startswith("USART") for af in pin["alternate_functions"])
+        any(
+            (af.get("peripheral") or "").startswith("USART")
+            for af in pin["signals"]
+        )
         for pin in payload["pins"]
     )
     assert has_usart_af, f"no USART AF surfaced for {device}"
