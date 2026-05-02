@@ -117,11 +117,18 @@ def _segment_to_memory(segment: ET.Element, default_aspace: str) -> dict[str, An
     else:
         access = "ro"
 
-    # Render size as bytes-with-unit; KB/MB only when exact.
-    size_str = (
-        f"{size // 1024}KB" if size >= 1024 and size % 1024 == 0
-        else f"{size}B"
-    )
+    # Render size as bytes-with-unit; KB/MB/GB only when exact.
+    # SAM E70 declares 512MB / 256MB peripheral regions which would
+    # otherwise emit as "524288KB" — ugly and harder for downstream
+    # tools.  Prefer the largest unit that divides exactly.
+    if size >= (1 << 30) and size % (1 << 30) == 0:
+        size_str = f"{size >> 30}GB"
+    elif size >= (1 << 20) and size % (1 << 20) == 0:
+        size_str = f"{size >> 20}MB"
+    elif size >= 1024 and size % 1024 == 0:
+        size_str = f"{size // 1024}KB"
+    else:
+        size_str = f"{size}B"
 
     out: dict[str, Any] = {
         "id":     name,
@@ -346,6 +353,15 @@ def _extract_modules_block(root: ET.Element) -> tuple[
             mod_inst = _attr(irq, "module-instance")
             if idx is None or not name:
                 continue
+            # SAM ATDFs include Cortex-M system exceptions
+            # (Reset_vect=-15, NMI=-14, …, SysTick=-1) under
+            # <interrupts>.  These are core-architectural, not
+            # peripheral NVIC entries — the v2.1 schema requires
+            # num >= 0.  Skip them; downstream consumers that need
+            # the system-exception list can derive it from the core
+            # ISA in identity.core.
+            if idx < 0:
+                continue
             full_name = f"{mod_inst}_{name}_vect" if mod_inst else f"{name}_vect"
             key = (idx, full_name)
             if key in seen_irq:
@@ -387,8 +403,16 @@ def _detect_core(root: ET.Element) -> dict[str, Any]:
     a_lower = arch.lower()
     if a_lower.startswith("avr"):
         return {"isa": "avr", "name": f"avr-{family}" if family else "avr", "bits": 8}
+    # Cortex-M7 (SAME70, SAMS70, SAMV70/V71) — Cortex-M7F with FPU + MPU,
+    # ARMv7E-M ISA.  Architecture string is "CORTEX-M7" verbatim in ATDF.
+    if "cortex-m7" in a_lower:
+        return {"isa": "armv7e-m", "name": "cortex-m7f", "bits": 32, "fpu": True, "mpu": True}
+    # Cortex-M4 — SAM4S, SAM4E, SAM4N, SAMG (M4F variants), SAMD51, SAME51.
     if a_lower.startswith("armv7") or "cortex-m4" in a_lower:
         return {"isa": "armv7e-m", "name": "cortex-m4f", "bits": 32, "fpu": True, "mpu": True}
+    # Cortex-M3 — SAM3 line.
+    if "cortex-m3" in a_lower:
+        return {"isa": "armv7-m", "name": "cortex-m3", "bits": 32, "mpu": True}
     if a_lower.startswith("armv6") or "cortex-m0" in a_lower:
         return {"isa": "armv6-m", "name": "cortex-m0", "bits": 32}
     return {"isa": a_lower or "unknown", "name": _attr(device, "name").lower(), "bits": 32}

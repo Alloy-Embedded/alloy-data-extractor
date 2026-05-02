@@ -1,0 +1,219 @@
+# SAM E70 family overlay — Cortex-M7F flagship of Microchip's SAM
+# line.  ATSAME70 covers J19/J20/J21, N19/N20/N21, Q19/Q20/Q21
+# variants in 64/100/144-pin LQFP/LFBGA/UFBGA packages.
+#
+# Sourced from:
+#   * SAM E70/S70/V70/V71 Family Datasheet DS60001527E
+#   * SAM E70 Hardware Reference (Atmel-44001)
+#   * Per-chip ATDF (ATSAME70Q21B.atdf etc.)
+#
+# SAM E70 has no on-chip ADC calibration ROM in the STM32 sense —
+# AFE calibration is performed at runtime via the AUTOCAL field
+# in the AFEC mode register.  TEMPSENSE0/1 from the AVR family
+# does not apply.
+
+# ---------------------------------------------------------------------------
+# ADC (AFEC0 / AFEC1)
+# ---------------------------------------------------------------------------
+
+[adc]
+# DS60001527E §51 — AFEC max conversion clock = 40 MHz, sustained
+# rate ≤ 16 MHz for 12-bit accuracy.  Pick the conservative ceiling
+# so codegen stays inside spec for full-rail VDDIO.
+max_clock_hz = 16_000_000
+
+# ---------------------------------------------------------------------------
+# UART / TWIHS (I²C) / SPI
+# ---------------------------------------------------------------------------
+
+[uart]
+# DS60001527E §44 — USART async max = MCK / 8 = 18.75 Mbaud at
+# MCK = 150 MHz.  Synchronous mode supports MCK / 4 = 37.5 Mbaud
+# but the family table reports the conservative async ceiling.
+max_baud_hz = 18_750_000
+
+[spi]
+# DS60001527E §40 — SPI master clock max = MCK / 2 = 75 MHz at
+# MCK = 150 MHz.
+max_clock_hz = 75_000_000
+
+[i2c]
+# DS60001527E §43 (TWIHS) — Fast-mode-plus = 1 MHz; HS-mode up to
+# 3.4 MHz exists but requires HS-only slaves.  Family ceiling for
+# generic codegen = 1 MHz.
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions — re-assert top-level rows so the merge engine has
+# a canonical entry even if a downstream extractor drops one.  The
+# size shown here is the maximum across the family; per-chip
+# overlays can override.
+# ---------------------------------------------------------------------------
+
+# ITCM — Cortex-M7 Instruction Tightly-Coupled Memory.
+[[memories]]
+name = "ITCM"
+kind = "sram"
+base_address = 0x0000_0000
+size_bytes = 131072    # 128 KB max (configurable via GPNVM)
+access = "rwx"
+role = "tcm"
+
+# Internal Flash — application image.  Q21 variants ship 2 MB; J19
+# is 512 KB; J20/N20/Q20 are 1 MB.
+[[memories]]
+name = "IFLASH"
+kind = "flash"
+base_address = 0x0040_0000
+size_bytes = 2097152   # 2 MB on Q21B (override per-device)
+access = "rx"
+address_space = "code"
+
+# Internal Boot ROM — 16 KB factory boot loader.
+[[memories]]
+name = "IROM"
+kind = "rom"
+base_address = 0x0080_0000
+size_bytes = 16384
+access = "rx"
+role = "boot-rom"
+
+# DTCM — Cortex-M7 Data Tightly-Coupled Memory.
+[[memories]]
+name = "DTCM"
+kind = "sram"
+base_address = 0x2000_0000
+size_bytes = 131072    # 128 KB max
+access = "rwx"
+role = "tcm"
+
+# Main system RAM — accessible by every bus master.
+[[memories]]
+name = "IRAM"
+kind = "sram"
+base_address = 0x2040_0000
+size_bytes = 393216    # 384 KB on Q21B
+access = "rwx"
+address_space = "data"
+
+# External Bus Interface chip-selects — present on Q-package only.
+# Each CS exposes 16 MB for external SRAM/SDRAM/NAND.  The ATDF
+# carries them for all variants but only Q-pin packages route the
+# EBI signals; smaller packages leave them unconnected.
+[[memories]]
+name = "EBI_CS0"
+kind = "external"
+base_address = 0x6000_0000
+size_bytes = 16777216
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS1"
+kind = "external"
+base_address = 0x6100_0000
+size_bytes = 16777216
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS2"
+kind = "external"
+base_address = 0x6200_0000
+size_bytes = 16777216
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS3"
+kind = "external"
+base_address = 0x6300_0000
+size_bytes = 16777216
+access = "rwx"
+role = "external-bus"
+
+# QSPI memory-mapped region — XIP from external SPI flash.
+[[memories]]
+name = "QSPIMEM"
+kind = "external"
+base_address = 0x8000_0000
+size_bytes = 536870912 # 512 MB window, sized to attached flash
+access = "rwx"
+role = "xip"
+
+# AXI matrix configuration window — debug only.
+[[memories]]
+name = "AXIMX"
+kind = "io"
+base_address = 0xA000_0000
+size_bytes = 1048576
+access = "rw"
+
+# Peripheral / system register windows.
+[[memories]]
+name = "PERIPHERALS"
+kind = "io"
+base_address = 0x4000_0000
+size_bytes = 536870912 # 512 MB peripheral aperture
+access = "rw"
+
+[[memories]]
+name = "SYSTEM"
+kind = "io"
+base_address = 0xE000_0000
+size_bytes = 268435456 # 256 MB Cortex-M private peripheral bus
+access = "rw"
+
+# ---------------------------------------------------------------------------
+# System clock — PMC (Power Management Controller)
+# ---------------------------------------------------------------------------
+# DS60001527E §31 — SAM E70 boots from MAINCK fast RC at 4 MHz
+# (default, GPNVM_BOOT not set), then ROM may switch MAINCK to
+# 12 MHz before handing control to the application.  Maximum CPU
+# clock is 300 MHz via PLLA driven from a 12 MHz crystal.
+
+[system_clock.post_reset_profile]
+name = "factory-mainck-rc-4mhz"
+sysclk_hz = 4_000_000
+hclk_hz = 4_000_000
+pclk_hz = 4_000_000
+source = "MAINCK_RC4"
+
+[[system_clock.recommended_profiles]]
+name = "mainck-rc-12mhz"
+sysclk_hz = 12_000_000
+hclk_hz = 12_000_000
+pclk_hz = 12_000_000
+source = "MAINCK_RC12"
+
+[[system_clock.recommended_profiles]]
+name = "plla-150mhz"
+sysclk_hz = 150_000_000
+hclk_hz = 150_000_000
+pclk_hz = 75_000_000
+source = "PLLA_MAINCK"
+pll_mul = 25      # 12 MHz × 25 = 300 MHz, ÷2 = 150 MHz output
+pll_div = 1
+pll_post_div = 2
+
+[[system_clock.recommended_profiles]]
+name = "plla-300mhz-max"
+sysclk_hz = 300_000_000
+hclk_hz = 300_000_000
+pclk_hz = 150_000_000
+source = "PLLA_MAINCK"
+pll_mul = 25      # 12 MHz × 25 = 300 MHz
+pll_div = 1
+pll_post_div = 1
