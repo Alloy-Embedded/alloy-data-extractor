@@ -47,25 +47,73 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
-# Three flavors of symbol creation: combo (mux selectors), integer
-# (PLL/divider fields), boolean (enables / single-bit selects).
-# The first arg is the symbol name like "PMC_MCKR_CSS".
+# Symbol creation patterns.  Two distinct conventions across SAM CSP:
+#
+# 1. Register-direct (SAME70/V71/S70/V70 — clk_sam_e70):
+#    sym = clk_comp.createComboSymbol("PMC_MCKR_CSS", ...)
+#    The first arg encodes <module?>_<register>_<field> and we
+#    can split it directly against the ATDF register index.
+#
+# 2. Config-key abstract (SAMD21/D51/L21/C20/C21 — clk_sam_d21,
+#    clk_sam_d51_e51_e53_e54, clk_sam_l21):
+#    sym = coreComponent.createKeyValueSetSymbol(
+#        "CONFIG_CLOCK_OSC8M_PRES", ...)
+#    sym.setHelp("...register:OSC8M")        # ← register comes
+#                                              from setHelp arg!
+#    The first arg is a config-key like "CONFIG_CLOCK_<X>_<Y>"
+#    and the actual ATDF register name is hidden in the
+#    `register:<NAME>` token of the adjacent setHelp() call.
 _SYM_RX = re.compile(
     r"""create
-        (?P<kind>Combo|Integer|Boolean|Hex|Long)
-        Symbol\s*\(\s*
+        (?P<kind>Combo|Integer|Boolean|Hex|Long|KeyValueSet)
+        Symbol\s*\(\s*  # the call may wrap to the next line on D51
         ["'](?P<name>[A-Z0-9_]+)["']
     """,
-    re.VERBOSE,
+    re.VERBOSE | re.DOTALL,
+)
+
+# `<symbol>.setHelp("atmel;device:" + Variables.get("__PROCESSOR")
+#  + ";comp:clk_sam_d21;register:OSC8M")` — capture the register
+# name following `register:`.  Note that Harmony often
+# concatenates multiple string literals via Python `+`, so the
+# argument crosses several `"..."` literals (and the embedded
+# `Variables.get("__PROCESSOR")` introduces a `)` *before* the
+# register: token).  Bound the search to a single line instead.
+_SETHELP_RX = re.compile(
+    r'\.setHelp[^\n]*?register:(?P<reg>[A-Z][A-Z0-9_]*)',
 )
 
 
-def _walk_clk_py(clk_path: Path) -> list[tuple[str, str]]:
-    """Return list of ``(symbol_kind, symbol_name)`` from clk.py."""
+def _walk_clk_py(clk_path: Path) -> list[tuple[str, str, str | None]]:
+    """Return list of ``(symbol_kind, symbol_name, register_hint)``.
+
+    ``register_hint`` is the explicit register name extracted
+    from the adjacent ``setHelp(...register:X)`` call when one is
+    present (config-key style); ``None`` when only the symbol
+    name is available (register-direct style).
+    """
     if not clk_path.is_file():
         return []
     text = clk_path.read_text(encoding="utf-8", errors="replace")
-    return [(m.group("kind").lower(), m.group("name")) for m in _SYM_RX.finditer(text)]
+    out: list[tuple[str, str, str | None]] = []
+    # Walk every create*Symbol(...) call (may span multiple lines
+    # in clk_sam_d51_e51_e53_e54), then look ahead within a 12-
+    # line window for a `.setHelp(...)` call carrying the
+    # register hint.  The window is loose because Harmony nests
+    # addKey() calls between create and setHelp on some chips.
+    for m in _SYM_RX.finditer(text):
+        kind = m.group("kind").lower()
+        name = m.group("name")
+        # Convert character offset to line number, then look 12
+        # source lines further for setHelp.
+        line_start = text.count("\n", 0, m.start())
+        chunk = "\n".join(text.splitlines()[line_start:line_start + 12])
+        register_hint: str | None = None
+        help_m = _SETHELP_RX.search(chunk)
+        if help_m:
+            register_hint = help_m.group("reg").upper()
+        out.append((kind, name, register_hint))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +165,55 @@ def _atdf_register_index(atdf_root: ET.Element) -> set[str]:
         if name:
             out.add(name.upper())
     return out
+
+
+def _atdf_bitfields_per_register(
+    atdf_root: ET.Element,
+) -> dict[str, set[str]]:
+    """Map ``REGISTER_NAME → {bitfield_name, ...}`` so the
+    symbol-name resolver can validate / fuzzy-match the field
+    token against real ATDF fields.  Same register name in
+    multiple modules returns the union of fields across modules
+    (cheap and disambiguates rarely)."""
+    out: dict[str, set[str]] = defaultdict(set)
+    for reg in atdf_root.iter("register"):
+        rname = reg.get("name", "").upper()
+        if not rname:
+            continue
+        for bf in reg.iter("bitfield"):
+            fname = bf.get("name", "").upper()
+            if fname:
+                out[rname].add(fname)
+    return out
+
+
+def _match_field_token(
+    candidate: str, register_fields: set[str],
+) -> str | None:
+    """Resolve a symbol-name field token (``"PRES"``) to the
+    actual ATDF bitfield name (``"PRESC"``).  Tries:
+
+    1. Exact match.
+    2. Substring match where ``candidate`` appears in a longer
+       bitfield name (``"TIME"`` → ``"LTIME"``, ``"BYPASS"`` →
+       ``"LBYPASS"``).
+    3. Prefix match (``"PRES"`` → ``"PRESC"``).
+    """
+    if not register_fields:
+        return None
+    if candidate in register_fields:
+        return candidate
+    # Prefer prefix matches (PRES → PRESC) over substring (PRESC → INPRESC)
+    prefix_matches = [f for f in register_fields if f.startswith(candidate)]
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
+    suffix_matches = [f for f in register_fields if f.endswith(candidate)]
+    if len(suffix_matches) == 1:
+        return suffix_matches[0]
+    contains_matches = [f for f in register_fields if candidate in f]
+    if len(contains_matches) == 1:
+        return contains_matches[0]
+    return None
 
 
 def _atdf_value_groups(atdf_root: ET.Element) -> dict[tuple[str, str], dict[str, int]]:
@@ -176,30 +273,54 @@ def _atdf_value_groups(atdf_root: ET.Element) -> dict[tuple[str, str], dict[str,
 # ---------------------------------------------------------------------------
 
 
-# Heuristic mapping from Atmel PMC/SUPC register naming to v2.1
-# clock-domain ids.  The right column is the v2.1 domain id; the
-# left column matches against the ATDF register name.  Order
-# matters — first match wins.
+# Heuristic mapping from Atmel PMC/SUPC/MCLK/GCLK/SYSCTRL register
+# naming to v2.1 clock-domain ids.  Order matters — first match
+# wins, so SAME70/V71 PMC names must come before generic prefix
+# rules.  Right column is the v2.1 domain id; centre column is
+# whether this binding contributes a "select" / "pll" / "gate".
 _DOMAIN_INFERENCE: tuple[tuple[re.Pattern[str], str, str], ...] = (
-    # Slow Clock — SUPC_CR.XTALSEL toggles between RC32k and XTAL32k
+    # ── SAME70 / V71 / V70 / S70 (PMC topology) ───────────────
     (re.compile(r"^SUPC_CR$"),         "slck",   "select"),
     (re.compile(r"^SUPC_MR$"),         "slck",   "select"),
-    # Main Clock — CKGR_MOR.MOSCSEL between RC and external xtal
     (re.compile(r"^CKGR_MOR$"),        "mainck", "select"),
-    # PLL — CKGR_PLLAR / CKGR_PLLBR / CKGR_UCKR (USB PLL)
     (re.compile(r"^CKGR_PLL[A-Z]R$"),  "plla",   "pll"),
     (re.compile(r"^CKGR_UCKR$"),       "upll",   "pll"),
-    # Master Clock — PMC_MCKR.{CSS, PRES, MDIV}
     (re.compile(r"^PMC_MCKR$"),        "mck",    "select"),
-    # Programmable Clocks — PMC_PCK0..7
     (re.compile(r"^PMC_PCK\d?$"),      "pck",    "select"),
-    # Generic Peripheral Clocks — PMC_PCR.GCLKCSS
     (re.compile(r"^PMC_PCR$"),         "gclk",   "select"),
-    # USB clock — PMC_USB.{USBS, USBDIV}
     (re.compile(r"^PMC_USB$"),         "usbck",  "select"),
-    # Peripheral Clock Enable Registers — PMC_PCER0/PCER1 (gate, not select)
     (re.compile(r"^PMC_PCER\d?$"),     "periph", "gate"),
     (re.compile(r"^PMC_PCDR\d?$"),     "periph", "gate"),
+
+    # ── SAMD51 / E5x / SAMD21 / SAML21 / SAMC2x ──────────────
+    # ATDF register names are bare (no module prefix), so these
+    # patterns match against the actual <register name="..."> from
+    # the ATDF after _resolve_field_from_symbol_name pulled the
+    # register hint from setHelp(...register:X).
+    (re.compile(r"^OSC8M$"),       "osc8m",     "select"),
+    (re.compile(r"^OSC16MCTRL$"),  "osc16m",    "select"),
+    (re.compile(r"^XOSC$"),        "xosc",      "select"),
+    (re.compile(r"^XOSC32K$"),     "xosc32k",   "select"),
+    (re.compile(r"^OSC32K$"),      "osc32k",    "select"),
+    (re.compile(r"^OSCULP32K$"),   "osculp32k", "select"),
+    (re.compile(r"^DFLLCTRL[AB]?$"),"dfll",     "select"),
+    (re.compile(r"^DFLLMUL$"),     "dfll",      "pll"),
+    (re.compile(r"^DFLLVAL$"),     "dfll",      "pll"),
+    (re.compile(r"^DPLLCTRLA$"),   "dpll",      "select"),
+    (re.compile(r"^DPLLCTRLB$"),   "dpll",      "select"),
+    (re.compile(r"^DPLLRATIO$"),   "dpll",      "pll"),
+    (re.compile(r"^DPLLPRESC$"),   "dpll",      "select"),
+    # GCLK generator/peripheral channel
+    (re.compile(r"^GENCTRL$"),     "gclk",      "select"),
+    (re.compile(r"^GENDIV$"),      "gclk",      "select"),
+    (re.compile(r"^CLKCTRL$"),     "gclk_periph","select"),
+    (re.compile(r"^PCHCTRL$"),     "gclk_periph","select"),
+    # MCLK / PM CPU divider
+    (re.compile(r"^CPUDIV$"),      "mclk",      "select"),
+    (re.compile(r"^HSDIV$"),       "hsclk",     "select"),
+    (re.compile(r"^CPUSEL$"),      "cpu",       "select"),
+    (re.compile(r"^APB[ABCDE]SEL$"),"apb",      "select"),
+    (re.compile(r"^APB[ABCDE]MASK$"),"apb_gate","gate"),
 )
 
 
@@ -218,14 +339,92 @@ def _infer_domain(reg_name: str) -> tuple[str, str] | None:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_field_from_symbol_name(
+    sym_name: str,
+    register_hint: str | None,
+    known_registers: set[str],
+    bitfields_per_register: dict[str, set[str]] | None = None,
+) -> tuple[str, str] | None:
+    """Resolve ``(register, field)`` from a clk.py symbol creation.
+
+    Two paths, register_hint preferred (more reliable):
+
+    1. Hint-driven (SAMD21-style): ``setHelp(...register:OSC8M)``
+       — the explicit register name from the help string is
+       authoritative.  The field is then the symbol-name suffix
+       *after* the register token (``CONFIG_CLOCK_OSC8M_PRES``
+       ↦ register=OSC8M, field=PRES) or the trailing token if
+       the register name doesn't appear in the symbol name.
+
+    2. Direct split (SAME70-style): ``"PMC_MCKR_CSS"`` → split
+       against ``known_registers``.  Used only when no
+       register_hint is available, since ``known_registers``
+       contains every register declared by every IP module
+       (including MTB / NVMCTRL "CONFIG" registers that would
+       otherwise short-circuit the split for clock symbols).
+
+    Filters out obvious-noise field tokens (ENABLE / ONDEMAND /
+    FREQ / RUNSTDBY) that come from the GUI-config symbols
+    rather than register fields.
+    """
+    _NOISE_FIELDS = {
+        "ENABLE", "ONDEMAND", "RUNSTDBY", "RUNSTDY",
+        "FREQ", "FREQUENCY", "GAIN", "AMPGC",
+        "BIAS", "FRANGE", "STARTUP",
+    }
+
+    # 1. Hint-driven first.
+    if register_hint and register_hint in known_registers:
+        register_fields = (bitfields_per_register or {}).get(register_hint, set())
+        upper = sym_name.upper()
+
+        # Collect candidate field tokens to try (in priority order):
+        # (a) substring after `_<REG>_` if the register appears in
+        #     the middle of the symbol name;
+        # (b) trailing token after register prefix;
+        # (c) plain trailing token.
+        candidates: list[str] = []
+        token = f"_{register_hint}_"
+        idx = upper.find(token)
+        if idx != -1:
+            candidates.append(upper[idx + len(token):])
+        if upper.startswith(register_hint + "_"):
+            candidates.append(upper[len(register_hint) + 1:])
+        candidates.append(upper.rsplit("_", 1)[-1])
+
+        for cand in candidates:
+            if not cand or cand in _NOISE_FIELDS:
+                continue
+            # Map the candidate to the real ATDF bitfield name when
+            # we know the register's bitfield set; PRES → PRESC,
+            # TIME → LTIME, BYPASS → LBYPASS, etc.
+            real_field = _match_field_token(cand, register_fields)
+            if real_field:
+                return register_hint, real_field
+            # No bitfield index available — fall back to the raw
+            # candidate (will simply produce an empty encoding
+            # downstream, which gets filtered out by the schema
+            # validator — that's the correct behaviour).
+            if not register_fields:
+                return register_hint, cand
+        return None
+
+    # 2. Direct split fallback.
+    direct = _split_symbol_name(sym_name, known_registers)
+    if direct[0] and direct[1] not in _NOISE_FIELDS:
+        return direct  # type: ignore[return-value]
+    return None
+
+
 def _build_clock_domains(
-    symbols: list[tuple[str, str]],
+    symbols: list[tuple[str, str, str | None]],
     known_registers: set[str],
     enums: dict[tuple[str, str], dict[str, int]],
     register_module: dict[str, str],
+    bitfields_per_register: dict[str, set[str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Synthesise v2.1 ``clock.domains[]`` from the (kind, name)
-    list extracted from clk.py.
+    """Synthesise v2.1 ``clock.domains[]`` from the symbol list
+    extracted from clk.py.
 
     Each unique (domain, role) collects all (register, field)
     references; for ``select`` and ``pll`` roles we also fold in
@@ -234,10 +433,14 @@ def _build_clock_domains(
     # {(domain, role): [(register, field, kind), ...]}
     bucket: dict[tuple[str, str], list[tuple[str, str, str]]] = defaultdict(list)
     seen: set[tuple[str, str]] = set()
-    for kind, sym_name in symbols:
-        reg, field = _split_symbol_name(sym_name, known_registers)
-        if not reg or not field:
+    for kind, sym_name, register_hint in symbols:
+        resolved = _resolve_field_from_symbol_name(
+            sym_name, register_hint, known_registers,
+            bitfields_per_register,
+        )
+        if resolved is None:
             continue
+        reg, field = resolved
         domain_role = _infer_domain(reg)
         if domain_role is None:
             continue
@@ -287,17 +490,23 @@ def _build_clock_domains(
         #   - sources OR source is required (anyOf)
         #   - select_register / prescaler_register both require
         #     `encoding` when present (additionalProperties:false)
-        # We therefore only emit a domain when there's an encoded
-        # select_register; integer divider fields (PLL DIVA/MULA,
-        # PMC_USB.USBDIV) and boolean toggles (XTALSEL,
-        # MOSCSEL=0/1) get dropped here — codegen recovers them
-        # from templates.<ip>.fields[...] when it needs to.
-
+        # Strategy: pick the first enum-backed binding as the
+        # `select_register`, prioritising semantic select tokens
+        # (CSS, SRC, MOSCSEL, …) when available; otherwise any
+        # enum-backed binding is acceptable so SAMD21-style
+        # families (where the controlling field is PRESC, FILTER
+        # or similar with an attached value-group) still surface
+        # at least one row.
         chosen_select: tuple[str, str, str] | None = None
         for cand in select_candidates:
             if (cand[0], cand[1]) in enums:
                 chosen_select = cand
                 break
+        if chosen_select is None:
+            for cand in (*prescaler_candidates, *other, *pll_candidates):
+                if (cand[0], cand[1]) in enums:
+                    chosen_select = cand
+                    break
 
         if chosen_select is None:
             continue
@@ -426,11 +635,13 @@ def extract_device(
         return payload
 
     known_registers = _atdf_register_index(atdf_root)
+    bitfields_per_register = _atdf_bitfields_per_register(atdf_root)
     enums = _atdf_value_groups(atdf_root)
     register_module = _atdf_register_module_index(atdf_root)
 
     domains = _build_clock_domains(
         symbols, known_registers, enums, register_module,
+        bitfields_per_register,
     )
     if domains:
         payload["clock"] = {"domains": domains}
