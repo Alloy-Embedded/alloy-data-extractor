@@ -39,6 +39,7 @@ import re
 import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -52,6 +53,13 @@ if _CODEGEN_SRC.is_dir() and str(_CODEGEN_SRC) not in sys.path:
 from alloy_data_extractor.emit.canonical_yaml import write_device_yaml  # noqa: E402
 from alloy_data_extractor.extractors.cmsis_svd_v2_1 import (  # noqa: E402
     extract_device as svd_extract,
+)
+from alloy_data_extractor.extractors.nxp_mcuxpresso_v2_1 import (  # noqa: E402
+    extract_device as mcuxpresso_extract,
+)
+from alloy_data_extractor.merge_v2_1 import (  # noqa: E402
+    NXP_MERGE_POLICY,
+    merge_payloads,
 )
 
 
@@ -107,21 +115,57 @@ def _family_slug(device_id: str) -> str:
     return s
 
 
+def _known_peripherals_from_payload(payload: dict[str, Any]) -> set[str]:
+    """Build the uppercased peripheral-name set used by the
+    MCUXpresso pin-mux extractor to disambiguate IOMUXC name
+    splits.  The cmsis_svd extractor lowercases peripheral ids;
+    we re-uppercase to match the IOMUXC macro convention."""
+    out: set[str] = set()
+    for p in payload.get("peripherals", []):
+        pid = p.get("id")
+        if isinstance(pid, str) and pid:
+            out.add(pid.upper())
+    return out
+
+
 def _re_emit_one(
     *,
     svd_path: Path,
+    sdk_root: Path | None,
     output_root: Path,
-) -> tuple[Path, str]:
+) -> tuple[Path, str, list[str]]:
     device = _device_id(svd_path.stem)
     family = _family_slug(device)
-    payload = svd_extract(
+    primary = svd_extract(
         vendor="nxp", family=family, device=device, svd_path=svd_path,
     )
+    sources = ["cmsis-svd"]
+    enrichments: list[dict[str, Any]] = []
+
+    if sdk_root is not None and sdk_root.is_dir():
+        known = _known_peripherals_from_payload(primary)
+        mcux_payload = mcuxpresso_extract(
+            vendor="nxp", family=family, device=device,
+            sdk_root=sdk_root, known_peripherals=known,
+        )
+        if mcux_payload.get("peripherals"):
+            enrichments.append(mcux_payload)
+            sources.append("nxp-mcuxpresso")
+
+    if enrichments:
+        result = merge_payloads(
+            primary=primary, enrichments=tuple(enrichments),
+            policy=NXP_MERGE_POLICY,
+        )
+        payload = result.payload
+    else:
+        payload = primary
+
     out_path = write_device_yaml(
         payload=payload, output_root=output_root,
         vendor="nxp", family=family, device=device,
     )
-    return out_path, family
+    return out_path, family, sources
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -129,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--svd-root", type=Path, required=True,
                         help="Root containing NXP/ and Freescale/ subdirs "
                              "(usually <cache>/cmsis-svd-data/data)")
+    parser.add_argument("--sdk-root", type=Path, default=None,
+                        help="Path to the cloned nxp-mcuxpresso/mcux-sdk "
+                             "(omit to skip the MCUXpresso enrichment).")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--families", default="",
                         help="Comma-separated subset (default = every family)")
@@ -156,17 +203,17 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     failures = 0
-    by_family: dict[str, list[tuple[Path, bool, str]]] = defaultdict(list)
+    by_family: dict[str, list[tuple[Path, bool, str, list[str]]]] = defaultdict(list)
     for svd in svds:
         try:
-            out_path, fam = _re_emit_one(
-                svd_path=svd, output_root=args.out,
+            out_path, fam, sources = _re_emit_one(
+                svd_path=svd, sdk_root=args.sdk_root, output_root=args.out,
             )
-            by_family[fam].append((out_path, True, ""))
+            by_family[fam].append((out_path, True, "", sources))
         except Exception as exc:  # noqa: BLE001
             failures += 1
             fam = _family_slug(_device_id(svd.stem))
-            by_family[fam].append((svd, False, f"{type(exc).__name__}: {exc}"))
+            by_family[fam].append((svd, False, f"{type(exc).__name__}: {exc}", []))
 
     grand_ok = 0
     grand_fail = 0
@@ -176,9 +223,17 @@ def main(argv: list[str] | None = None) -> int:
         fail = len(rows) - ok
         grand_ok += ok
         grand_fail += fail
+        # Aggregate sources used across this family (skip the
+        # primary "cmsis-svd" tag for compactness — every chip has it).
+        all_sources: set[str] = set()
+        for r in rows:
+            for s in r[3]:
+                if s != "cmsis-svd":
+                    all_sources.add(s)
+        src_label = "+".join(sorted(all_sources)) if all_sources else "svd-only"
         status = "✓" if fail == 0 else "⚠"
-        print(f"  {status} {fam:10s} {ok:>3}/{len(rows):<3} chips")
-        for path, success, msg in rows:
+        print(f"  {status} {fam:14s} {ok:>3}/{len(rows):<3} chips  ({src_label})")
+        for path, success, msg, _ in rows:
             if not success:
                 print(f"      ✗ {path.stem}: {msg[:80]}")
 

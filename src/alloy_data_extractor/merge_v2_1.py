@@ -501,10 +501,41 @@ MICROCHIP_MERGE_POLICY = MergePolicy(
 )
 
 
+NXP_MERGE_POLICY = MergePolicy(
+    name="nxp",
+    primary_source="cmsis-svd",
+    section_priorities={
+        # Memory + clock + pinout default to overlay-owned —
+        # CMSIS-SVD doesn't carry a memory map, NXP doesn't
+        # publish a CubeMX-equivalent declarative XML.
+        "memory":             ("nxp-overlay", "cmsis-svd"),
+        "pinout":             ("nxp-overlay", "cmsis-svd"),
+        "interrupts":         ("cmsis-svd",),
+        "clock.oscillators":  ("nxp-overlay", "cmsis-svd"),
+        "clock.domains":      ("nxp-overlay", "cmsis-svd"),
+        "clock.profiles":     ("nxp-overlay",),
+        "clock.reset_state":  ("nxp-overlay",),
+    },
+    peripheral_field_priorities={
+        # pin_options come from MCUXpresso SDK fsl_iomuxc.h —
+        # i.MX RT only for now (Kinetis fsl_pinmux.h is a
+        # follow-up).  Overlay can still ship per-chip
+        # overrides.
+        "pin_options":        ("nxp-mcuxpresso", "nxp-overlay"),
+        "ip_version":         ("nxp-mcuxpresso", "cmsis-svd"),
+    },
+    template_field_priorities={
+        "max_clock":          ("nxp-overlay",),
+        "max_baud":           ("nxp-overlay",),
+    },
+)
+
+
 __all__ = [
     "MICROCHIP_MERGE_POLICY",
     "MergePolicy",
     "MergeResult",
+    "NXP_MERGE_POLICY",
     "STM32_MERGE_POLICY",
     "merge_payloads",
 ]
