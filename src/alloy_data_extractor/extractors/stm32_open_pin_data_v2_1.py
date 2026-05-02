@@ -140,20 +140,34 @@ def extract_device(
 
     # ---------- compose enrichment peripherals[] ----------
     # Order matters for determinism: emit by sorted instance name.
+    # The SVD's peripheral id sometimes drops the trailing digit
+    # (STM32G030 has ``ADC`` not ``ADC1``) so we ALSO emit a
+    # digit-stripped alias when the instance name ends in a digit.
+    # The merge engine drops phantom rows that don't match a
+    # primary peripheral, so the alias is harmless when unused.
     peripherals: list[dict[str, Any]] = []
+    emitted_ids: set[str] = set()
     for instance in sorted(set(list(ip_versions) + list(peripheral_pin_options))):
-        row: dict[str, Any] = {
-            "id":       instance,
-            "template": "unknown",   # primary payload's template wins
-        }
-        if instance in ip_versions:
-            row["ip_version"] = ip_versions[instance]
-        if instance in peripheral_pin_options:
-            row["pin_options"] = {
-                signal: peripheral_pin_options[instance][signal]
-                for signal in sorted(peripheral_pin_options[instance])
+        candidate_ids = [instance]
+        stripped = instance.rstrip("0123456789")
+        if stripped and stripped != instance:
+            candidate_ids.append(stripped)
+        for cid in candidate_ids:
+            if cid in emitted_ids:
+                continue
+            emitted_ids.add(cid)
+            row: dict[str, Any] = {
+                "id":       cid,
+                "template": "unknown",   # primary payload's template wins
             }
-        peripherals.append(row)
+            if instance in ip_versions:
+                row["ip_version"] = ip_versions[instance]
+            if instance in peripheral_pin_options:
+                row["pin_options"] = {
+                    signal: peripheral_pin_options[instance][signal]
+                    for signal in sorted(peripheral_pin_options[instance])
+                }
+            peripherals.append(row)
 
     payload: dict[str, Any] = {
         "schema": "alloy.device.v2.1",

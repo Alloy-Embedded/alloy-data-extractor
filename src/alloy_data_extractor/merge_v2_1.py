@@ -410,6 +410,7 @@ STM32_MERGE_POLICY = MergePolicy(
         "timing_presets":     ("stm32-overlay",),
         "channels":           ("stm32-cubemx", "stm32-overlay"),
         "dma":                ("stm32-cubemx", "modm-devices"),
+        "max_clock_override": ("stm32-overlay", "stm32-cubemx"),
     },
     template_field_priorities={
         "options":            ("stm32-tier", "stm32-overlay"),
