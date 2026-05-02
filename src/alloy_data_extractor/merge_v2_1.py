@@ -160,9 +160,47 @@ def _merge_sections(
         merged["identity"] = identity
         section_sources["identity"] = policy.primary_source
 
+    # Clock gets a per-key sub-section merge — multiple sources
+    # contribute different parts (cubemx → topology, overlay →
+    # profiles, modm → calibration cycles, …).  Priority:
+    # ``clock.<sub>`` defaults to the same priority list as
+    # ``clock`` but can be overridden via
+    # ``policy.section_priorities["clock.<sub>"]``.
+    clock_subkeys = ("oscillators", "domains", "profiles", "pll", "reset_state")
+    if any(s == "clock" or s.startswith("clock.") for s in
+           {*policy.section_priorities, "clock"}) and \
+       any("clock" in p for p in (primary, *enrichments)):
+        clock_block: dict[str, Any] = {}
+        clock_default_priority = policy.section_priority("clock")
+        for sub in clock_subkeys:
+            sub_priority = policy.section_priorities.get(
+                f"clock.{sub}", clock_default_priority,
+            )
+            chosen: Any = None
+            for source_cls in sub_priority:
+                payload = by_class.get(source_cls)
+                if payload is None:
+                    continue
+                value = (payload.get("clock") or {}).get(sub)
+                if _is_non_empty(value):
+                    chosen = value
+                    break
+            if chosen is None:
+                # Fallback: any payload with a non-empty value.
+                for payload in (primary, *enrichments):
+                    value = (payload.get("clock") or {}).get(sub)
+                    if _is_non_empty(value):
+                        chosen = value
+                        break
+            if chosen is not None:
+                clock_block[sub] = chosen
+        if clock_block:
+            merged["clock"] = clock_block
+            section_sources["clock"] = "merged"
+
     for section in every_section:
-        if section in {"schema", "provenance", "identity"}:
-            # rebuilt explicitly in the caller
+        if section in {"schema", "provenance", "identity", "clock"}:
+            # rebuilt explicitly above (or later in caller)
             continue
         # Skip sections we'll merge per-instance below.
         if section in {"peripherals", "templates"}:
@@ -397,10 +435,18 @@ STM32_MERGE_POLICY = MergePolicy(
     name="stm32",
     primary_source="cmsis-svd",
     section_priorities={
-        "memory":      ("stm32-overlay", "stm32-cubemx", "cmsis-svd"),
-        "pinout":      ("stm32-open-pin-data", "stm32-cubemx", "cmsis-svd"),
-        "clock":       ("stm32-overlay", "stm32-cubemx", "cmsis-svd"),
-        "interrupts":  ("cmsis-svd",),
+        "memory":             ("stm32-overlay", "stm32-cubemx", "cmsis-svd"),
+        "pinout":             ("stm32-open-pin-data", "stm32-cubemx", "cmsis-svd"),
+        "interrupts":         ("cmsis-svd",),
+        # Sub-section priorities for clock — cubemx owns the
+        # topology (oscillators + domains + select_register
+        # encodings); overlay owns the named profiles + reset_state;
+        # both contribute to the merged clock block.
+        "clock.oscillators":  ("stm32-cubemx", "stm32-overlay", "cmsis-svd"),
+        "clock.domains":      ("stm32-cubemx", "stm32-overlay", "cmsis-svd"),
+        "clock.pll":          ("stm32-cubemx", "stm32-overlay"),
+        "clock.profiles":     ("stm32-overlay", "stm32-cubemx"),
+        "clock.reset_state":  ("stm32-overlay", "stm32-cubemx", "cmsis-svd"),
     },
     peripheral_field_priorities={
         "ip_version":         ("stm32-open-pin-data", "stm32-cubemx", "cmsis-svd"),
