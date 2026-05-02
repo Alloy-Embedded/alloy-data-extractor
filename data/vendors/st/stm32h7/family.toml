@@ -1,0 +1,204 @@
+# STM32H7 family overlay — Cortex-M7F high-performance line.
+#
+# Sourced from:
+#   * RM0433 (STM32H742/3/5/7/B0/53/55/B0) rev. 8
+#   * DS12930 (STM32H743xI/G) rev. 13
+#   * Cmsis device header stm32h7xx.h
+#
+# H7 ADC calibration ROM lives at a distinct address range
+# (0x1FF1E820..0x1FF1E860) — different from the F-family
+# (0x1FFFF7xx) and the G/U/WL families (0x1FFF75xx).
+
+# ---------------------------------------------------------------------------
+# ADC
+# ---------------------------------------------------------------------------
+
+[adc]
+# RM0433 §25.4.4 — H7 ADC max clock = 50 MHz (boost mode).
+# Some H7 variants run async ADC clock at higher rates (up to
+# 80 MHz on H7Bx) but 50 MHz is the conservative family ceiling.
+max_clock_hz = 50_000_000
+
+[adc.calibration_context]
+# DS12930 §3.18.1 — TS_CAL1 = 30 °C, TS_CAL2 = 110 °C @ V_REF = 3.3 V.
+peripheral = "ADC3"
+vrefint_nominal_mv = 1216
+cal_voltage_mv = 3300
+cal_temp_low_celsius = 30
+cal_temp_high_celsius = 110
+
+[[adc.calibration_data_points]]
+peripheral = "ADC3"
+kind = "vrefint_cal"
+address = 0x1FF1_E860
+size_bits = 16
+semantic_constant = 3300
+
+[[adc.calibration_data_points]]
+peripheral = "ADC3"
+kind = "ts_cal_low"
+address = 0x1FF1_E820
+size_bits = 16
+semantic_constant = 30
+
+[[adc.calibration_data_points]]
+peripheral = "ADC3"
+kind = "ts_cal_high"
+address = 0x1FF1_E840
+size_bits = 16
+semantic_constant = 110
+
+# RM0433 §25.4.32 — H7 routes the temperature sensor + VBAT +
+# VREFINT to ADC3 only (channels 17/18/19).  ADC1/ADC2 don't
+# expose these internal sources.
+[[adc.internal_channels]]
+peripheral = "ADC3"
+kind = "vbat"
+channel_index = 17
+
+[[adc.internal_channels]]
+peripheral = "ADC3"
+kind = "temperature_sensor"
+channel_index = 18
+
+[[adc.internal_channels]]
+peripheral = "ADC3"
+kind = "vrefint"
+channel_index = 19
+
+# ---------------------------------------------------------------------------
+# UART / I²C
+# ---------------------------------------------------------------------------
+
+[uart]
+# RM0433 §47.4.7 — USART baud max at PCLK = 100 MHz oversample-8 = 12.5 Mbaud;
+# at PCLK = 200 MHz async oversample-8 → 25 Mbaud achievable.
+max_baud_hz = 25_000_000
+
+[i2c]
+# RM0433 §52 — Fast-Mode-Plus (1 MHz) supported across H7.
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (DS12930 §3 / RM0433 §2)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0x0800_0000
+size_bytes = 2097152   # 2 MB max on STM32H743 / 753
+access = "rx"
+address_space = "code"
+
+# Tightly Coupled Memory — CPU-attached RAM for hot code/data.
+[[memories]]
+name = "ITCM"
+kind = "sram"
+base_address = 0x0000_0000
+size_bytes = 65536     # 64 KB instruction TCM
+access = "rx"
+role = "tcm"
+
+[[memories]]
+name = "DTCM"
+kind = "sram"
+base_address = 0x2000_0000
+size_bytes = 131072    # 128 KB data TCM
+access = "rwx"
+role = "tcm"
+
+# AXI SRAM — main RAM accessible by every bus master.
+[[memories]]
+name = "AXISRAM"
+kind = "sram"
+base_address = 0x2400_0000
+size_bytes = 524288    # 512 KB on H743
+access = "rwx"
+address_space = "data"
+
+# AHB SRAM banks 1/2 — peripheral DMA scratch.
+[[memories]]
+name = "SRAM1"
+kind = "sram"
+base_address = 0x3000_0000
+size_bytes = 131072
+access = "rwx"
+role = "ahb"
+
+[[memories]]
+name = "SRAM2"
+kind = "sram"
+base_address = 0x3002_0000
+size_bytes = 131072
+access = "rwx"
+role = "ahb"
+
+[[memories]]
+name = "SRAM3"
+kind = "sram"
+base_address = 0x3004_0000
+size_bytes = 32768
+access = "rwx"
+role = "ahb"
+
+[[memories]]
+name = "SRAM4"
+kind = "sram"
+base_address = 0x3800_0000
+size_bytes = 65536
+access = "rwx"
+role = "d3-domain"
+
+[[memories]]
+name = "BACKUP_SRAM"
+kind = "sram"
+base_address = 0x3880_0000
+size_bytes = 4096
+access = "rwx"
+role = "battery-backed"
+
+# ---------------------------------------------------------------------------
+# System clock
+# ---------------------------------------------------------------------------
+# RM0433 §8.5 — H7 boots from HSI64 (64 MHz internal), max
+# sysclk 480 MHz on H743/H753 (boost mode) via PLL1.
+
+[system_clock.post_reset_profile]
+name = "default-hsi64-64mhz"
+sysclk_hz = 64_000_000
+hclk_hz = 64_000_000
+pclk_hz = 64_000_000
+source = "HSI64"
+
+[[system_clock.recommended_profiles]]
+name = "pll-hsi-400mhz"
+sysclk_hz = 400_000_000
+hclk_hz = 200_000_000   # AHB max = 200 MHz
+pclk_hz = 100_000_000   # APB max = 100 MHz
+source = "PLL1_P_HSI"
+pll_m = 4
+pll_n = 50
+pll_p = 2
+
+[[system_clock.recommended_profiles]]
+name = "pll-hse-480mhz-boost"
+sysclk_hz = 480_000_000
+hclk_hz = 240_000_000
+pclk_hz = 120_000_000
+source = "PLL1_P_HSE"
+pll_m = 5     # 25 MHz HSE / 5 = 5 MHz PLL input
+pll_n = 192   # 5 MHz × 192 = 960 MHz VCO
+pll_p = 2     # 960 / 2 = 480 MHz (VOS0 boost mode required)

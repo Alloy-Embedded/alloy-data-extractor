@@ -1,0 +1,126 @@
+# STM32F1 family overlay — Cortex-M3 mainstream line.
+#
+# Sourced from:
+#   * RM0008 (STM32F101/2/3/5/7) rev. 21
+#   * DS5792 (STM32F103xC/D/E/F/G) rev. 12
+#   * Cmsis device header stm32f1xx.h
+#
+# F1 has a single-point temperature sensor calibration (TS_CAL1
+# only); the high-temp slope comes from the datasheet's typical
+# value (4.3 mV/°C).  F2/F3/F4 added the two-point calibration.
+
+# ---------------------------------------------------------------------------
+# ADC
+# ---------------------------------------------------------------------------
+
+[adc]
+# RM0008 §11.3.3 — F1 ADC max clock = 14 MHz (PCLK2/divider).
+max_clock_hz = 14_000_000
+
+[adc.calibration_context]
+# RM0008 §11.10 — TS_CAL = 30 °C @ V_REF = 3.3 V.  Note: F1
+# has only ONE calibration point; codegen falls back to the
+# datasheet typical slope.
+peripheral = "ADC1"
+vrefint_nominal_mv = 1200
+cal_voltage_mv = 3300
+cal_temp_low_celsius = 30
+cal_temp_high_celsius = 30   # placeholder — F1 uses datasheet slope
+ts_slope_uv_per_c = 4300
+
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "vrefint_cal"
+address = 0x1FFFF7BA
+size_bits = 16
+semantic_constant = 3300
+
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "ts_cal_low"
+address = 0x1FFFF7B8
+size_bits = 16
+semantic_constant = 30
+
+# RM0008 §11.10 — F1 ADC1 internal channels (channels 16/17).
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "temperature_sensor"
+channel_index = 16
+
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "vrefint"
+channel_index = 17
+
+# ---------------------------------------------------------------------------
+# UART / I²C
+# ---------------------------------------------------------------------------
+
+[uart]
+# RM0008 §27.3.4 — USART baud max at PCLK1 = 36 MHz / PCLK2 = 72 MHz.
+max_baud_hz = 4_500_000
+
+[i2c]
+# RM0008 §26.3 — F1 I²C goes up to Fast-Mode (400 kHz) only;
+# Fast-Mode-Plus arrived in later families.
+max_clock_hz = 400_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+# ---------------------------------------------------------------------------
+# Memory regions
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0x0800_0000
+size_bytes = 1048576   # 1 MB max on STM32F103xG — overridable
+access = "rx"
+address_space = "code"
+
+[[memories]]
+name = "SRAM"
+kind = "sram"
+base_address = 0x2000_0000
+size_bytes = 98304     # 96 KB max
+access = "rwx"
+address_space = "data"
+
+# ---------------------------------------------------------------------------
+# System clock
+# ---------------------------------------------------------------------------
+# RM0008 §6.3.5 — F1 boots from HSI8 (8 MHz), max sysclk 72 MHz
+# via PLL fed from HSI/2 or HSE.
+
+[system_clock.post_reset_profile]
+name = "default-hsi8-8mhz"
+sysclk_hz = 8_000_000
+hclk_hz = 8_000_000
+pclk_hz = 8_000_000
+source = "HSI8"
+
+[[system_clock.recommended_profiles]]
+name = "pll-hsi-64mhz"
+sysclk_hz = 64_000_000
+hclk_hz = 64_000_000
+pclk_hz = 32_000_000   # PCLK1 must be ≤ 36 MHz on F1
+source = "PLL_HSI"
+pll_input = "HSI/2"
+pll_mul = 16
+
+[[system_clock.recommended_profiles]]
+name = "pll-hse-72mhz"
+sysclk_hz = 72_000_000
+hclk_hz = 72_000_000
+pclk_hz = 36_000_000
+source = "PLL_HSE"
+pll_input = "HSE"
+pll_mul = 9     # 8 MHz × 9 = 72 MHz

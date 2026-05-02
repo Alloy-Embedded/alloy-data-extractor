@@ -118,11 +118,20 @@ _ADMITTED_STM32: tuple[_ChipSources, ...] = (
 
 
 _FAMILY_TO_SVD_PREFIXES: dict[str, tuple[str, ...]] = {
-    "stm32g0": (
-        "STM32G030", "STM32G031", "STM32G041",
-        "STM32G050", "STM32G051", "STM32G061",
-        "STM32G070", "STM32G071", "STM32G081",
-        "STM32G0B0", "STM32G0B1", "STM32G0C1",
+    "stm32f0": (
+        "STM32F030", "STM32F031", "STM32F038", "STM32F042",
+        "STM32F048", "STM32F051", "STM32F058", "STM32F070",
+        "STM32F071", "STM32F072", "STM32F078", "STM32F091",
+        "STM32F098",
+    ),
+    "stm32f1": (
+        "STM32F100", "STM32F101", "STM32F102", "STM32F103",
+        "STM32F105", "STM32F107",
+    ),
+    "stm32f3": (
+        "STM32F301", "STM32F302", "STM32F303", "STM32F318",
+        "STM32F328", "STM32F334", "STM32F358", "STM32F373",
+        "STM32F378", "STM32F398",
     ),
     "stm32f4": (
         "STM32F401", "STM32F405", "STM32F407", "STM32F410",
@@ -130,6 +139,23 @@ _FAMILY_TO_SVD_PREFIXES: dict[str, tuple[str, ...]] = {
         "STM32F417", "STM32F423", "STM32F427", "STM32F429",
         "STM32F437", "STM32F439", "STM32F446", "STM32F469",
         "STM32F479",
+    ),
+    "stm32g0": (
+        "STM32G030", "STM32G031", "STM32G041",
+        "STM32G050", "STM32G051", "STM32G061",
+        "STM32G070", "STM32G071", "STM32G081",
+        "STM32G0B0", "STM32G0B1", "STM32G0C1",
+    ),
+    "stm32g4": (
+        "STM32G431", "STM32G441", "STM32G471", "STM32G473",
+        "STM32G474", "STM32G483", "STM32G484", "STM32G491",
+        "STM32G4A1",
+    ),
+    "stm32h7": (
+        "STM32H723", "STM32H725", "STM32H730", "STM32H733",
+        "STM32H735", "STM32H742", "STM32H743", "STM32H745",
+        "STM32H747", "STM32H750", "STM32H753", "STM32H755",
+        "STM32H757", "STM32H7A3", "STM32H7B0", "STM32H7B3",
     ),
 }
 

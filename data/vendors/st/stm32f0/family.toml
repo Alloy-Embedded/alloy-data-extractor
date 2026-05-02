@@ -1,0 +1,139 @@
+# STM32F0 family overlay — Cortex-M0 entry-level line.
+#
+# Sourced from:
+#   * RM0091 (STM32F0x1/F0x2/F0x8) rev. 10
+#   * DS9773 (STM32F091xC) rev. 5
+#   * Cmsis device header stm32f0xx.h
+#
+# F0 shares ADC calibration ROM addresses with the F1 family
+# (the legacy 0x1FFFF7B8/BA range) — distinct from the modern
+# G0/G4 (0x1FFF75A8/AA) and H7 (0x1FF1E820+) addresses.
+
+# ---------------------------------------------------------------------------
+# ADC
+# ---------------------------------------------------------------------------
+
+[adc]
+# RM0091 §13.4.2 — F0 ADC max clock = 14 MHz (PCLK/2 or HSI14).
+max_clock_hz = 14_000_000
+
+[adc.calibration_context]
+# RM0091 §13.10.5 — TS_CAL1 = 30 °C, TS_CAL2 = 110 °C @ V_REF = 3.3 V.
+peripheral = "ADC1"
+vrefint_nominal_mv = 1230
+cal_voltage_mv = 3300
+cal_temp_low_celsius = 30
+cal_temp_high_celsius = 110
+
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "vrefint_cal"
+address = 0x1FFFF7BA
+size_bits = 16
+semantic_constant = 3300
+
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "ts_cal_low"
+address = 0x1FFFF7B8
+size_bits = 16
+semantic_constant = 30
+
+[[adc.calibration_data_points]]
+peripheral = "ADC1"
+kind = "ts_cal_high"
+address = 0x1FFFF7C2
+size_bits = 16
+semantic_constant = 110
+
+# RM0091 §13.10.5 — F0 ADC1 internal channels.
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "temperature_sensor"
+channel_index = 16
+
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "vrefint"
+channel_index = 17
+
+[[adc.internal_channels]]
+peripheral = "ADC1"
+kind = "vbat"
+channel_index = 18
+
+# ---------------------------------------------------------------------------
+# UART / I²C
+# ---------------------------------------------------------------------------
+
+[uart]
+# RM0091 §27.4.7 — USART baud max at PCLK = 48 MHz, oversample-8.
+max_baud_hz = 6_000_000
+
+[i2c]
+# RM0091 §28.4.4 — I²C peripheral supports Fast-Mode-Plus (1 MHz)
+# on F0x1/F0x2 / F0x8.
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (DS9773 §3 / RM0091 §2.4)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0x0800_0000
+size_bytes = 262144   # 256 KB max on STM32F091 — overridable per-device
+access = "rx"
+address_space = "code"
+
+[[memories]]
+name = "SRAM"
+kind = "sram"
+base_address = 0x2000_0000
+size_bytes = 32768    # 32 KB max
+access = "rwx"
+address_space = "data"
+
+# ---------------------------------------------------------------------------
+# System clock
+# ---------------------------------------------------------------------------
+# RM0091 §6.4.4 — F0 boots from HSI8 (8 MHz), max sysclk 48 MHz
+# via PLL fed from HSI/2 or HSE.
+
+[system_clock.post_reset_profile]
+name = "default-hsi8-8mhz"
+sysclk_hz = 8_000_000
+hclk_hz = 8_000_000
+pclk_hz = 8_000_000
+source = "HSI8"
+
+[[system_clock.recommended_profiles]]
+name = "pll-hsi-48mhz"
+sysclk_hz = 48_000_000
+hclk_hz = 48_000_000
+pclk_hz = 48_000_000
+source = "PLL_HSI"
+pll_input = "HSI/2"
+pll_mul = 12
+
+[[system_clock.recommended_profiles]]
+name = "pll-hse-48mhz"
+sysclk_hz = 48_000_000
+hclk_hz = 48_000_000
+pclk_hz = 48_000_000
+source = "PLL_HSE"
+pll_input = "HSE"
+pll_mul = 6   # 8 MHz × 6 = 48 MHz

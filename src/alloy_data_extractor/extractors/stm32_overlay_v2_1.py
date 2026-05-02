@@ -77,7 +77,9 @@ def _build_memory(toml: dict[str, Any]) -> list[dict[str, Any]]:
         size_bytes = r.get("size_bytes") or r.get("size")
         if not isinstance(size_bytes, int):
             continue
-        base = r.get("base_address") or r.get("base")
+        # Don't use ``or`` — H7's ITCM at base_address=0x0 reads as
+        # falsy and would silently disappear.
+        base = r.get("base_address") if "base_address" in r else r.get("base")
         if not isinstance(base, int):
             continue
         access = r.get("access") or "rwx"
