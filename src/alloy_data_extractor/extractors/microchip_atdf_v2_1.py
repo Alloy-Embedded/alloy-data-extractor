@@ -259,6 +259,55 @@ def _ip_class_for_module(module_name: str) -> str:
     return module_name.lower().rstrip("0123456789").rstrip("_") or module_name.lower()
 
 
+def _extract_instance_pin_options(
+    inst: ET.Element,
+) -> dict[str, list[dict[str, str]]]:
+    """Read ``<instance><signals><signal pad="..." function="..."
+    group="..." index="..."/>`` and return the v2.1
+    ``pin_options`` dict for one peripheral instance.
+
+    Heuristic for the dict-key shape:
+
+    * Single-channel groups (e.g. USART RXD/TXD, CTS, RTS) carry
+      ``index="0"`` redundantly — collapse to ``rxd`` / ``cts``
+      for parity with STM32 open-pin-data output.
+    * Multi-channel groups (AFEC ``AD0``..``AD15``, TC ``TIOA0``)
+      keep the index suffix → ``ad0`` / ``tioa0`` / ``tioa1``.
+
+    Pads are deduped per signal-key while preserving declaration
+    order — the first pad listed in ATDF tends to be the
+    package-default routing.
+    """
+    signals_block = inst.find("signals")
+    if signals_block is None:
+        return {}
+    # Bucket {group: [(index, pad), ...]} preserving order.
+    groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for sig in signals_block.iter("signal"):
+        pad = _attr(sig, "pad")
+        group = _attr(sig, "group")
+        index = _attr(sig, "index")
+        if not pad or not group:
+            continue
+        groups[group].append((index, pad))
+    out: dict[str, list[dict[str, str]]] = {}
+    for group, pairs in groups.items():
+        # If this group spans multiple distinct indices, suffix the
+        # key — otherwise drop the index entirely.
+        distinct_indices = {idx for idx, _ in pairs if idx}
+        suffix_with_index = len(distinct_indices) > 1
+        for idx, pad in pairs:
+            if suffix_with_index and idx:
+                key = f"{group}{idx}".lower()
+            else:
+                key = group.lower()
+            entry = {"pin": pad}
+            bucket = out.setdefault(key, [])
+            if entry not in bucket:
+                bucket.append(entry)
+    return out
+
+
 def _extract_modules_block(root: ET.Element) -> tuple[
     dict[str, dict[str, Any]],     # templates
     list[dict[str, Any]],           # peripherals
@@ -266,11 +315,22 @@ def _extract_modules_block(root: ET.Element) -> tuple[
 ]:
     """Walk ``<modules>`` + ``<peripherals>`` + ``<interrupts>``."""
     # Index modules by NAME (e.g. "USART") so per-instance lookups
-    # find the right register layout.
+    # find the right register layout.  Also stash caption + version
+    # ("Universal Synchronous…", "ZW") which the per-instance block
+    # uses for description + ip_version.
     modules_by_name: dict[str, ET.Element] = {}
+    module_caption: dict[str, str] = {}
+    module_version: dict[str, str] = {}
     for module in root.iter("modules"):
         for m in module.findall("module"):
-            modules_by_name[_attr(m, "name")] = m
+            mname = _attr(m, "name")
+            modules_by_name[mname] = m
+            cap = _attr(m, "caption")
+            ver = _attr(m, "version")
+            if cap:
+                module_caption[mname] = cap
+            if ver:
+                module_version[mname] = ver
 
     # Cluster registers + fields by IP class.
     templates_by_class: dict[str, dict[str, Any]] = {}
@@ -324,6 +384,15 @@ def _extract_modules_block(root: ET.Element) -> tuple[
         for module in per_root.findall("module"):
             mod_name = _attr(module, "name")
             ip_class = _ip_class_for_module(mod_name)
+            # <modules><module caption="..." version="..."> carries
+            # both a human-readable description ("Universal
+            # Synchronous/Asynchronous Receiver/Transmitter") and
+            # an Atmel-internal IP rev tag ("ZW" for SAME70 USART).
+            # Look them up from the indices built above — the
+            # <peripherals><module> block doesn't carry these
+            # attributes, only <modules><module> does.
+            caption = module_caption.get(mod_name) or None
+            version = module_version.get(mod_name) or None
             for inst in module.findall("instance"):
                 inst_name = _attr(inst, "name")
                 if not inst_name:
@@ -340,6 +409,25 @@ def _extract_modules_block(root: ET.Element) -> tuple[
                 }
                 if base is not None:
                     row["base"] = f"0x{base:X}" if base >= 0x100 else base
+                if caption:
+                    row["description"] = caption
+                if version:
+                    # Microchip's ATDF version letters ("ZW", "S",
+                    # "B11") aren't directly comparable to STM32's
+                    # cubemx-style ip_version names, but they're
+                    # the only stable IP-rev tag the vendor
+                    # publishes.  Prefix with the module name so
+                    # cross-vendor consumers can disambiguate
+                    # ("usart_ZW" vs "afec_S").
+                    row["ip_version"] = f"{mod_name.lower()}_{version}"
+                # <signals><signal pad="PB2" function="C" group="CTS"
+                #   index="0"/></signals> — same role as the STM32
+                # open-pin-data pin_options block.  Extract per-
+                # instance so peripherals[*].pin_options matches the
+                # ST shape exactly (signal_name → [{pin: PAD}, …]).
+                pin_options = _extract_instance_pin_options(inst)
+                if pin_options:
+                    row["pin_options"] = pin_options
                 peripherals.append(row)
 
     # Interrupts: flat vector list + per-peripheral cross-binding.
