@@ -1,0 +1,98 @@
+# SAMG family overlay — auto-scaffolded by
+# scripts/scaffold_family_overlay.py from ATSAMG54N19.atdf.
+#
+# Core (per ATDF <device architecture>): Cortex-M4F
+# CHIP_FREQ_CPU_MAX:                     96_000_000 Hz
+#
+# Refine peripheral max clocks from the family datasheet
+# when you need silicon-accurate ceilings — these are
+# conservative defaults derived from CPU_MAX.
+
+# ---------------------------------------------------------------------------
+# ADC / UART / SPI / I²C max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+max_clock_hz = 16_000_000  # 16 MHz
+
+[uart]
+max_baud_hz = 12_000_000  # 12 MHz
+
+[spi]
+max_clock_hz = 48_000_000  # 48 MHz
+
+[i2c]
+max_clock_hz = 1_000_000  # 1 MHz (Fast-Mode-Plus, supported by every modern Atmel SERCOM/TWIHS)
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (auto-populated from ATDF <address-space><memory-segment>)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "PERIPHERALS"
+kind = "io"
+base_address = 0x40000000
+size_bytes = 536870912  # 512 MB
+access = "ro"
+
+[[memories]]
+name = "SYSTEM"
+kind = "io"
+base_address = 0xE0000000
+size_bytes = 268435456  # 256 MB
+access = "ro"
+
+[[memories]]
+name = "IFLASH"
+kind = "flash"
+base_address = 0x00400000
+size_bytes = 524288  # 512 KB
+access = "ro"
+address_space = "code"
+
+[[memories]]
+name = "IROM"
+kind = "rom"
+base_address = 0x00800000
+size_bytes = 4194304  # 4 MB
+access = "ro"
+role = "boot-rom"
+
+[[memories]]
+name = "IRAM"
+kind = "sram"
+base_address = 0x20000000
+size_bytes = 98304  # 96 KB
+access = "ro"
+address_space = "data"
+
+# ---------------------------------------------------------------------------
+# System clock — minimal post-reset + max profile.
+# Refine with PLL params + named oscillators per family datasheet.
+# ---------------------------------------------------------------------------
+
+[system_clock.post_reset_profile]
+name = "factory-default"
+sysclk_hz = 4_000_000  # 4 MHz
+hclk_hz = 4_000_000  # 4 MHz
+pclk_hz = 4_000_000  # 4 MHz
+source = "internal-rc"
+
+[[system_clock.recommended_profiles]]
+name = "cortexm4f-max"
+sysclk_hz = 96_000_000  # 96 MHz
+hclk_hz = 96_000_000  # 96 MHz
+pclk_hz = 96_000_000  # 96 MHz
+source = "pll"

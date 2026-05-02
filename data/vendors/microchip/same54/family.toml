@@ -1,0 +1,220 @@
+# SAME54 family overlay — auto-scaffolded by
+# scripts/scaffold_family_overlay.py from ATSAME54N20A.atdf.
+#
+# Core (per ATDF <device architecture>): Cortex-M4F
+# CHIP_FREQ_CPU_MAX:                     48_000_000 Hz
+#
+# Refine peripheral max clocks from the family datasheet
+# when you need silicon-accurate ceilings — these are
+# conservative defaults derived from CPU_MAX.
+
+# ---------------------------------------------------------------------------
+# ADC / UART / SPI / I²C max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+max_clock_hz = 16_000_000  # 16 MHz
+
+[uart]
+max_baud_hz = 6_000_000  # 6 MHz
+
+[spi]
+max_clock_hz = 24_000_000  # 24 MHz
+
+[i2c]
+max_clock_hz = 1_000_000  # 1 MHz (Fast-Mode-Plus, supported by every modern Atmel SERCOM/TWIHS)
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (auto-populated from ATDF <address-space><memory-segment>)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0x00000000
+size_bytes = 1048576  # 1 MB
+access = "rwx"
+address_space = "code"
+
+[[memories]]
+name = "SW0"
+kind = "external"
+base_address = 0x00800080
+size_bytes = 16
+access = "ro"
+
+[[memories]]
+name = "TEMP_LOG"
+kind = "external"
+base_address = 0x00800100
+size_bytes = 512
+access = "rw"
+
+[[memories]]
+name = "USER_PAGE"
+kind = "external"
+base_address = 0x00804000
+size_bytes = 512
+access = "rw"
+
+[[memories]]
+name = "CMCC"
+kind = "io"
+base_address = 0x03000000
+size_bytes = 16777216  # 16 MB
+access = "rw"
+
+[[memories]]
+name = "CMCC_DATARAM"
+kind = "io"
+base_address = 0x03000000
+size_bytes = 4096  # 4 KB
+access = "rw"
+
+[[memories]]
+name = "CMCC_TAGRAM"
+kind = "io"
+base_address = 0x03001000
+size_bytes = 1024  # 1 KB
+access = "rw"
+
+[[memories]]
+name = "CMCC_VALIDRAM"
+kind = "io"
+base_address = 0x03002000
+size_bytes = 64
+access = "rw"
+
+[[memories]]
+name = "QSPI"
+kind = "external"
+base_address = 0x04000000
+size_bytes = 16777216  # 16 MB
+access = "rwx"
+role = "xip"
+
+[[memories]]
+name = "HSRAM"
+kind = "sram"
+base_address = 0x20000000
+size_bytes = 262144  # 256 KB
+access = "rwx"
+address_space = "data"
+
+[[memories]]
+name = "HSRAM_ETB"
+kind = "sram"
+base_address = 0x20000000
+size_bytes = 32768  # 32 KB
+access = "rwx"
+address_space = "data"
+
+[[memories]]
+name = "HSRAM_RET1"
+kind = "sram"
+base_address = 0x20000000
+size_bytes = 32768  # 32 KB
+access = "rwx"
+address_space = "data"
+
+[[memories]]
+name = "HPB0"
+kind = "io"
+base_address = 0x40000000
+size_bytes = 17408  # 17 KB
+access = "rw"
+
+[[memories]]
+name = "HPB1"
+kind = "io"
+base_address = 0x41000000
+size_bytes = 139264  # 136 KB
+access = "rw"
+
+[[memories]]
+name = "HPB2"
+kind = "io"
+base_address = 0x42000000
+size_bytes = 15360  # 15 KB
+access = "rw"
+
+[[memories]]
+name = "HPB3"
+kind = "io"
+base_address = 0x43000000
+size_bytes = 12288  # 12 KB
+access = "rw"
+
+[[memories]]
+name = "SEEPROM"
+kind = "io"
+base_address = 0x44000000
+size_bytes = 131072  # 128 KB
+access = "rw"
+
+[[memories]]
+name = "SDHC0"
+kind = "io"
+base_address = 0x45000000
+size_bytes = 3072  # 3 KB
+access = "rw"
+
+[[memories]]
+name = "SDHC1"
+kind = "io"
+base_address = 0x46000000
+size_bytes = 3072  # 3 KB
+access = "rw"
+
+[[memories]]
+name = "BKUPRAM"
+kind = "sram"
+base_address = 0x47000000
+size_bytes = 8192  # 8 KB
+access = "rwx"
+role = "battery-backed"
+
+[[memories]]
+name = "PPB"
+kind = "io"
+base_address = 0xE0000000
+size_bytes = 1048576  # 1 MB
+access = "rw"
+
+[[memories]]
+name = "SCS"
+kind = "io"
+base_address = 0xE000E000
+size_bytes = 4096  # 4 KB
+access = "rw"
+
+# ---------------------------------------------------------------------------
+# System clock — minimal post-reset + max profile.
+# Refine with PLL params + named oscillators per family datasheet.
+# ---------------------------------------------------------------------------
+
+[system_clock.post_reset_profile]
+name = "factory-default"
+sysclk_hz = 4_000_000  # 4 MHz
+hclk_hz = 4_000_000  # 4 MHz
+pclk_hz = 4_000_000  # 4 MHz
+source = "internal-rc"
+
+[[system_clock.recommended_profiles]]
+name = "cortexm4f-max"
+sysclk_hz = 48_000_000  # 48 MHz
+hclk_hz = 48_000_000  # 48 MHz
+pclk_hz = 48_000_000  # 48 MHz
+source = "pll"
