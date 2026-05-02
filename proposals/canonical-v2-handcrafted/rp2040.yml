@@ -1,0 +1,594 @@
+# =============================================================================
+# RP2040  —  ARM Cortex-M0+ ×2 @ 133 MHz, 264 KB SRAM, external 2 MB QSPI
+# flash, 30 GPIOs (Pico module exposes 26 of them)
+# =============================================================================
+# Hand-written reference under canonical-v2.  Stresses three v1 weak spots:
+#   • symmetric dual-core (both cores identical, no PRO/APP asymmetry)
+#   • multi-bank SRAM (six banks, codegen may need per-bank linker chunks)
+#   • external XIP flash with internal SSI controller (not a CPU memory
+#     region in the SVD — codegen synthesises the flash window).
+#
+# PIO is RP2040-unique; we model it as a peripheral with a pin matrix and
+# a dedicated assembly language (codegen emits PIO programs as data).
+
+schema: alloy.device.v2.1
+
+identity:
+  vendor: raspberrypi
+  family: rp2040
+  device: rp2040
+  variant: pico                     # Raspberry Pi Pico module — 2 MB flash + 26
+                                    # exposed GPIOs out of the SoC's 30.
+  package: qfn-56                   # bare die; module is castellated 40-pad
+  core:
+    isa:  armv6-m
+    name: cortex-m0plus
+    fpu:  false
+    mpu:  true                       # M0+ MPU (8 regions)
+    bits: 32
+    endianness: little
+    interrupt_lines: 26
+    nvic_priority_bits: 2            # 4 levels (0..3)
+    multicore:
+      topology: symmetric_dual_core
+      cores:
+        - { id: cpu0, role: primary }
+        - { id: cpu1, role: secondary,
+            release_register: SIO.FIFO_WR,           # mailbox-launched
+            start_vector_symbol: secondary_start }
+
+provenance:
+  primary:    raspberrypi-svd:rp2040
+  secondary:  [pico-sdk:1.5.1, rp2040-datasheet]
+  authored:   hand
+  authored_on: 2026-05-01
+  notes: >-
+    XIP flash is provisioned by the boot ROM via the SSI controller; from
+    the application's perspective it appears as a 16 MB window at
+    0x10000000 (cached) / 0x11000000 (uncached) / 0x12000000 (read-only)
+    / 0x13000000 (passthrough).  Codegen emits `flash_xip` in those
+    windows; SRAM and SoC peripherals are otherwise standard.
+
+# -----------------------------------------------------------------------------
+# Memory map
+# -----------------------------------------------------------------------------
+memory:
+  # Boot ROM (16 KB on-die ROM).
+  - { id: rom,        base: 0x00000000, size: 16KB,  access: rx,
+      role: factory-rom }
+
+  # External QSPI flash mapped via XIP cache.  Four windows for cache
+  # behaviour.  Codegen generates the linker `.text`/`.rodata` into the
+  # cached window by default.
+  - { id: flash_xip,        base: 0x10000000, size: 2MB,   access: rx,
+      alias: code,         role: xip-cached, backing: external-qspi-flash }
+  - { id: flash_xip_nocache, base: 0x11000000, size: 2MB,   access: ro,
+      role: xip-uncached,  backing: external-qspi-flash }
+  - { id: flash_xip_noalloc, base: 0x12000000, size: 2MB,   access: ro,
+      role: xip-noalloc,   backing: external-qspi-flash }
+  - { id: flash_xip_thru,    base: 0x13000000, size: 2MB,   access: ro,
+      role: xip-passthrough, backing: external-qspi-flash }
+
+  # SRAM — six banks totalling 264 KB.  Banks 0-3 are striped 4-way for
+  # bandwidth; banks 4-5 are dedicated to per-core scratchpads.  We expose
+  # them as separate regions so codegen can place stacks on bank 4/5.
+  - { id: sram_striped, base: 0x20000000, size: 256KB, access: rwx,
+      alias: data,     role: striped, banks: [sram0, sram1, sram2, sram3] }
+  - { id: sram_bank4,  base: 0x20040000, size: 4KB,   access: rwx,
+      role: scratch,   default_use: cpu0_stack }
+  - { id: sram_bank5,  base: 0x20041000, size: 4KB,   access: rwx,
+      role: scratch,   default_use: cpu1_stack }
+
+# -----------------------------------------------------------------------------
+# Clock tree.  Three PLLs feed the SYS, USB, and reference clocks.
+# -----------------------------------------------------------------------------
+clock:
+  oscillators:
+    rosc:   { freq: 6.5MHz,        kind: rc-internal,      tolerance: 30% }
+    xosc:   { freq: 12MHz,         kind: crystal-external, range: [12MHz, 12MHz] }
+
+  pll:
+    pll_sys:
+      input_sources: [xosc]
+      vco_range: [400MHz, 1600MHz]
+      post_divs: [1, 2, 3, 4, 5, 6, 7]
+      max_output: 200MHz
+    pll_usb:
+      input_sources: [xosc]
+      vco_output_target: 1200MHz
+      post_div_chain: [5, 5]
+      output: 48MHz
+
+  domains:
+    - id: clk_ref
+      sources: [rosc, xosc, pll_usb]
+      max: 12MHz
+      # Delta 12: each clk_<x> has a SRC field selecting the source.  AUXSRC
+      # picks among the divided/PLL paths.
+      select_register:
+        reg: CLOCKS.CLK_REF_CTRL
+        field: SRC
+        encoding: { rosc: 0, clk_aux: 1, xosc: 2 }
+    - id: clk_sys
+      sources: [rosc, xosc, pll_sys, pll_usb, clk_ref]
+      max: 200MHz
+      default: 125MHz
+      select_register:
+        reg: CLOCKS.CLK_SYS_CTRL
+        field: SRC
+        encoding: { clk_ref: 0, clk_aux: 1 }
+      auxsrc_register:
+        reg: CLOCKS.CLK_SYS_CTRL
+        field: AUXSRC
+        encoding: { pll_sys: 0, pll_usb: 1, rosc: 2, xosc: 3, clk_ref: 4 }
+    - id: clk_peri
+      sources: [clk_sys, pll_usb, rosc, xosc, clk_ref]
+      max: 125MHz
+      auxsrc_register:
+        reg: CLOCKS.CLK_PERI_CTRL
+        field: AUXSRC
+        encoding: { clk_sys: 0, pll_sys: 1, pll_usb: 2, rosc: 3, xosc: 4, clk_ref: 5 }
+    - id: clk_usb
+      sources: [pll_usb, pll_sys, rosc, xosc]
+      target_freq: 48MHz
+      auxsrc_register: { reg: CLOCKS.CLK_USB_CTRL, field: AUXSRC,
+                         encoding: { pll_usb: 0, pll_sys: 1, rosc: 2, xosc: 3 } }
+    - id: clk_adc
+      sources: [pll_usb, pll_sys, rosc, xosc]
+      target_freq: 48MHz
+      auxsrc_register: { reg: CLOCKS.CLK_ADC_CTRL, field: AUXSRC,
+                         encoding: { pll_usb: 0, pll_sys: 1, rosc: 2, xosc: 3 } }
+    - id: clk_rtc
+      sources: [pll_usb, pll_sys, rosc, xosc]
+      target_freq: 46875Hz       # 48 MHz / 1024
+      auxsrc_register: { reg: CLOCKS.CLK_RTC_CTRL, field: AUXSRC,
+                         encoding: { pll_usb: 0, pll_sys: 1, rosc: 2, xosc: 3 } }
+
+  # Delta 10: pico-sdk's default profile is "125 MHz from PLL_SYS"; the boot
+  # ROM brings the chip up at "rosc-6.5mhz" first.
+  profiles:
+    - id: post-reset
+      kind: post-reset
+      sysclk: 6.5MHz
+      sysclk_source: rosc
+
+    - id: pico-sdk-default
+      kind: recommended
+      sysclk: 125MHz
+      sysclk_source: pll_sys
+      pll_sys: { vco: 1500MHz, post_div_1: 6, post_div_2: 2 }
+      pll_usb: { vco: 1200MHz, post_div_1: 5, post_div_2: 5 }
+      clk_peri: 125MHz
+
+    - id: overclocked-200mhz
+      kind: alternative
+      sysclk: 200MHz
+      sysclk_source: pll_sys
+      pll_sys: { vco: 1200MHz, post_div_1: 6, post_div_2: 1 }
+      pll_usb: { vco: 1200MHz, post_div_1: 5, post_div_2: 5 }
+      notes: Within RP2040 spec; verify flash QSPI timings hold at 200 MHz.
+
+  reset_state:
+    sys_source:  rosc
+    sys_freq:    6.5MHz
+    ref_source:  rosc
+
+# -----------------------------------------------------------------------------
+# IP-block templates
+# -----------------------------------------------------------------------------
+templates:
+
+  gpio:                                # SIO + IO_BANK0 — RP2040's GPIO model
+    pins_per_port: 30
+    capabilities: [input, output, pull-up, pull-down, drive-strength,
+                   slew-rate, schmitt-trigger,
+                   pad-isolation, function-select]
+    drive_levels: [2mA, 4mA, 8mA, 12mA]
+    function_select_count: 9          # GPIO_FUNC field = SPI/UART/I2C/PWM/SIO/PIO0/PIO1/CLOCK/USB
+    registers:
+      gpio_status: { offset: 0x000, stride: 8, count: 30, access: ro }
+      gpio_ctrl:   { offset: 0x004, stride: 8, count: 30 }
+
+  uart:                                # PrimeCell UART — same IP as Pi 0
+    capabilities: [tx, rx, dma, hardware-flow-control, irda, fifo, modem]
+    options:
+      data_bits:    [5, 6, 7, 8]
+      parity:       [none, even, odd, mark, space]
+      stop_bits:    ["1", "2"]
+      flow_control: [none, rts, cts, rts-cts]
+      fifo_depth:   32
+    max_baud: 921600                  # at clk_peri = 125 MHz
+    registers:
+      uartdr:    { offset: 0x000 }
+      uartfr:    { offset: 0x018, access: ro }
+      uartibrd:  { offset: 0x024 }
+      uartfbrd:  { offset: 0x028 }
+      uartlcr_h: { offset: 0x02C }
+      uartcr:    { offset: 0x030 }
+      uartifls:  { offset: 0x034 }
+      uartdmacr: { offset: 0x048 }
+    # Opt-in subset (delta 13).  Full register catalogue lives in the
+    # raspberrypi-svd; codegen reads it only for register-dump features.
+    fields:
+      uartcr.uarten: { bit: 0 }
+      uartcr.txe:    { bit: 8 }
+      uartcr.rxe:    { bit: 9 }
+      uartlcr_h.brk: { bit: 0 }
+      uartlcr_h.pen: { bit: 1 }
+      uartlcr_h.eps: { bit: 2,
+                       enum: { odd: 0, even: 1 } }                # delta 2
+      uartlcr_h.stp2: { bit: 3,
+                        enum: { "1": 0, "2": 1 } }
+      uartlcr_h.fen:  { bit: 4 }
+      uartlcr_h.wlen: { bits: [5, 6],
+                        enum: { 5bit: 0, 6bit: 1, 7bit: 2, 8bit: 3 } }
+      uartfr.txfe:   { bit: 7 }
+      uartfr.rxfe:   { bit: 4 }
+
+  spi:                                 # PrimeCell SPI / SSP
+    capabilities: [master, slave, full-duplex, dma, fifo]
+    options:
+      data_size:      [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+      modes:          [0, 1, 2, 3]
+      bit_order:      [msb-first, lsb-first]
+      fifo_depth:     8
+    max_clock: 62.5MHz                 # clk_peri / 2
+    registers:
+      sspcr0:   { offset: 0x000 }
+      sspcr1:   { offset: 0x004 }
+      sspdr:    { offset: 0x008 }
+      sspsr:    { offset: 0x00C, access: ro }
+      sspcpsr:  { offset: 0x010 }      # clock prescale (must be even, >=2)
+
+  i2c:                                  # DesignWare I²C
+    capabilities: [master, slave, smbus, dma, 7-bit-addr, 10-bit-addr]
+    options:
+      speeds: [100kHz, 400kHz, 1MHz]
+    registers:
+      ic_con:        { offset: 0x000 }
+      ic_tar:        { offset: 0x004 }
+      ic_data_cmd:   { offset: 0x010 }
+      ic_intr_stat:  { offset: 0x02C }
+      ic_enable:     { offset: 0x06C }
+
+  pwm:                                  # 8 slices × 2 channels = 16 PWM outputs
+    capabilities: [up, up-down, fade, dma]
+    counter_bits: 16
+    slice_count:  8
+    channels_per_slice: 2
+    registers:
+      ch_csr:      { offset: 0x000, stride: 0x14, count: 8 }
+      ch_div:      { offset: 0x004, stride: 0x14, count: 8 }
+      ch_ctr:      { offset: 0x008, stride: 0x14, count: 8 }
+      ch_cc:       { offset: 0x00C, stride: 0x14, count: 8 }
+      ch_top:      { offset: 0x010, stride: 0x14, count: 8 }
+
+  pio:                                  # Programmable I/O — RP2040 unique
+    capabilities: [stream-in, stream-out, side-set, autopull, autopush,
+                   irq, dma]
+    state_machines: 4
+    instruction_memory_words: 32
+    registers:
+      ctrl:           { offset: 0x000 }
+      fstat:          { offset: 0x004, access: ro }
+      txf:            { offset: 0x010, stride: 4, count: 4 }
+      rxf:            { offset: 0x020, stride: 4, count: 4 }
+      sm_clkdiv:      { offset: 0x0C8, stride: 0x18, count: 4 }
+      sm_execctrl:    { offset: 0x0CC, stride: 0x18, count: 4 }
+      instr_mem:      { offset: 0x048, stride: 4, count: 32 }
+    notes: |
+      PIO programs are 9-bit instructions stored in `instr_mem`.  Codegen
+      treats them as data; the alloy-pio assembler converts ".pio" sources
+      to constexpr arrays.
+
+  timer:                                # 64-bit running timer + 4× alarms
+    capabilities: [running-counter, alarm]
+    counter_bits: 64
+    alarm_count: 4
+    registers:
+      timehw:   { offset: 0x000, access: rw, role: high-write }
+      timelw:   { offset: 0x004, access: rw, role: low-write }
+      timehr:   { offset: 0x008, access: ro, role: high-read }
+      timelr:   { offset: 0x00C, access: ro, role: low-read }
+      alarm:    { offset: 0x010, stride: 4, count: 4 }
+      armed:    { offset: 0x020 }
+      timerawh: { offset: 0x024, access: ro }
+      timerawl: { offset: 0x028, access: ro }
+
+  adc:
+    capabilities: [single, continuous, fifo, dma]
+    options:
+      resolution: [12]
+      channels: 5                        # 4 GPIO + 1 internal temp
+    max_clock: 48MHz
+    registers:
+      cs:      { offset: 0x000 }
+      result:  { offset: 0x004, access: ro }
+      fcs:     { offset: 0x008 }
+      fifo:    { offset: 0x00C, access: ro }
+      div:     { offset: 0x010 }
+
+  dma_controller:
+    channels_per_controller: 12
+    capabilities: [memory-to-peripheral, peripheral-to-memory, memory-to-memory,
+                   chaining, byte-swap, sniffer]
+
+# -----------------------------------------------------------------------------
+# Peripheral instances
+# -----------------------------------------------------------------------------
+peripherals:
+
+  # --- GPIO (single instance — pins are Function-Select-driven)
+  - id: gpio
+    template: gpio
+    base: 0x40014000
+    bus:  apb
+    rcc:  { en: RESETS.RESET.io_bank0, rst: RESETS.RESET.io_bank0 }
+
+  # --- UART (2 instances)
+  - id: uart0
+    template: uart
+    base: 0x40034000
+    bus:  apb
+    clock_source: clk_peri
+    irq:  { num: 20, name: UART0_IRQHandler }
+    rcc:  { en: RESETS.RESET.uart0, rst: RESETS.RESET.uart0 }
+    dma:
+      tx: { ctrl: dma, dreq: 20 }      # DREQ_UART0_TX
+      rx: { ctrl: dma, dreq: 21 }
+    pin_options:
+      tx:  [{ pin: GPIO0, func: 2 }, { pin: GPIO12, func: 2 }, { pin: GPIO16, func: 2 }, { pin: GPIO28, func: 2 }]
+      rx:  [{ pin: GPIO1, func: 2 }, { pin: GPIO13, func: 2 }, { pin: GPIO17, func: 2 }, { pin: GPIO29, func: 2 }]
+      cts: [{ pin: GPIO2, func: 2 }, { pin: GPIO14, func: 2 }, { pin: GPIO18, func: 2 }]
+      rts: [{ pin: GPIO3, func: 2 }, { pin: GPIO15, func: 2 }, { pin: GPIO19, func: 2 }]
+
+  - id: uart1
+    template: uart
+    base: 0x40038000
+    bus:  apb
+    clock_source: clk_peri
+    irq:  { num: 21, name: UART1_IRQHandler }
+    rcc:  { en: RESETS.RESET.uart1, rst: RESETS.RESET.uart1 }
+    dma:
+      tx: { ctrl: dma, dreq: 22 }
+      rx: { ctrl: dma, dreq: 23 }
+    pin_options:
+      tx:  [{ pin: GPIO4, func: 2 }, { pin: GPIO8,  func: 2 }, { pin: GPIO20, func: 2 }, { pin: GPIO24, func: 2 }]
+      rx:  [{ pin: GPIO5, func: 2 }, { pin: GPIO9,  func: 2 }, { pin: GPIO21, func: 2 }, { pin: GPIO25, func: 2 }]
+
+  # --- SPI (2 instances)
+  - id: spi0
+    template: spi
+    base: 0x4003C000
+    bus:  apb
+    clock_source: clk_peri
+    irq:  { num: 18, name: SPI0_IRQHandler }
+    rcc:  { en: RESETS.RESET.spi0, rst: RESETS.RESET.spi0 }
+    dma:
+      tx: { ctrl: dma, dreq: 16 }
+      rx: { ctrl: dma, dreq: 17 }
+    pin_options:
+      sck:  [{ pin: GPIO2,  func: 1 }, { pin: GPIO6,  func: 1 }, { pin: GPIO18, func: 1 }, { pin: GPIO22, func: 1 }]
+      mosi: [{ pin: GPIO3,  func: 1 }, { pin: GPIO7,  func: 1 }, { pin: GPIO19, func: 1 }, { pin: GPIO23, func: 1 }]
+      miso: [{ pin: GPIO0,  func: 1 }, { pin: GPIO4,  func: 1 }, { pin: GPIO16, func: 1 }, { pin: GPIO20, func: 1 }]
+      csn:  [{ pin: GPIO1,  func: 1 }, { pin: GPIO5,  func: 1 }, { pin: GPIO17, func: 1 }, { pin: GPIO21, func: 1 }]
+
+  - id: spi1
+    template: spi
+    base: 0x40040000
+    bus:  apb
+    clock_source: clk_peri
+    irq:  { num: 19, name: SPI1_IRQHandler }
+    rcc:  { en: RESETS.RESET.spi1, rst: RESETS.RESET.spi1 }
+    dma:
+      tx: { ctrl: dma, dreq: 18 }
+      rx: { ctrl: dma, dreq: 19 }
+    pin_options:
+      sck:  [{ pin: GPIO10, func: 1 }, { pin: GPIO14, func: 1 }, { pin: GPIO26, func: 1 }]
+      mosi: [{ pin: GPIO11, func: 1 }, { pin: GPIO15, func: 1 }, { pin: GPIO27, func: 1 }]
+      miso: [{ pin: GPIO8,  func: 1 }, { pin: GPIO12, func: 1 }, { pin: GPIO24, func: 1 }, { pin: GPIO28, func: 1 }]
+      csn:  [{ pin: GPIO9,  func: 1 }, { pin: GPIO13, func: 1 }, { pin: GPIO25, func: 1 }, { pin: GPIO29, func: 1 }]
+
+  # --- I²C (2 instances)
+  - id: i2c0
+    template: i2c
+    base: 0x40044000
+    bus:  apb
+    clock_source: clk_sys
+    irq:  { num: 23, name: I2C0_IRQHandler }
+    rcc:  { en: RESETS.RESET.i2c0, rst: RESETS.RESET.i2c0 }
+    dma:
+      tx: { ctrl: dma, dreq: 32 }
+      rx: { ctrl: dma, dreq: 33 }
+    pin_options:
+      sda: [{ pin: GPIO0, func: 3 }, { pin: GPIO4,  func: 3 }, { pin: GPIO8,  func: 3 }, { pin: GPIO12, func: 3 }, { pin: GPIO16, func: 3 }, { pin: GPIO20, func: 3 }]
+      scl: [{ pin: GPIO1, func: 3 }, { pin: GPIO5,  func: 3 }, { pin: GPIO9,  func: 3 }, { pin: GPIO13, func: 3 }, { pin: GPIO17, func: 3 }, { pin: GPIO21, func: 3 }]
+
+  - id: i2c1
+    template: i2c
+    base: 0x40048000
+    bus:  apb
+    clock_source: clk_sys
+    irq:  { num: 24, name: I2C1_IRQHandler }
+    rcc:  { en: RESETS.RESET.i2c1, rst: RESETS.RESET.i2c1 }
+    pin_options:
+      sda: [{ pin: GPIO2, func: 3 }, { pin: GPIO6,  func: 3 }, { pin: GPIO10, func: 3 }, { pin: GPIO14, func: 3 }, { pin: GPIO18, func: 3 }, { pin: GPIO26, func: 3 }]
+      scl: [{ pin: GPIO3, func: 3 }, { pin: GPIO7,  func: 3 }, { pin: GPIO11, func: 3 }, { pin: GPIO15, func: 3 }, { pin: GPIO19, func: 3 }, { pin: GPIO27, func: 3 }]
+
+  # --- PWM
+  - id: pwm
+    template: pwm
+    base: 0x40050000
+    bus:  apb
+    clock_source: clk_sys
+    irq:  { num: 4, name: PWM_IRQ_WRAP_IRQHandler }
+    rcc:  { en: RESETS.RESET.pwm, rst: RESETS.RESET.pwm }
+    pin_options:
+      slice0_a: [{ pin: GPIO0,  func: 4 }, { pin: GPIO16, func: 4 }]
+      slice0_b: [{ pin: GPIO1,  func: 4 }, { pin: GPIO17, func: 4 }]
+      slice1_a: [{ pin: GPIO2,  func: 4 }, { pin: GPIO18, func: 4 }]
+      slice1_b: [{ pin: GPIO3,  func: 4 }, { pin: GPIO19, func: 4 }]
+      # … (slices 2..7 follow the same GPIO_n / GPIO_n+16 mod-2 pattern)
+
+  # --- PIO (2 instances)
+  - { id: pio0, template: pio, base: 0x50200000, bus: ahb,
+      clock_source: clk_sys,
+      irq: [{num:  7, name: PIO0_IRQ_0_IRQHandler},
+            {num:  8, name: PIO0_IRQ_1_IRQHandler}],
+      rcc: { en: RESETS.RESET.pio0, rst: RESETS.RESET.pio0 } }
+  - { id: pio1, template: pio, base: 0x50300000, bus: ahb,
+      clock_source: clk_sys,
+      irq: [{num:  9, name: PIO1_IRQ_0_IRQHandler},
+            {num: 10, name: PIO1_IRQ_1_IRQHandler}],
+      rcc: { en: RESETS.RESET.pio1, rst: RESETS.RESET.pio1 } }
+
+  # --- 64-bit timer
+  - id: timer
+    template: timer
+    base: 0x40054000
+    bus:  apb
+    clock_source: clk_ref
+    irq:  [{num:  0, name: TIMER_IRQ_0_IRQHandler},
+           {num:  1, name: TIMER_IRQ_1_IRQHandler},
+           {num:  2, name: TIMER_IRQ_2_IRQHandler},
+           {num:  3, name: TIMER_IRQ_3_IRQHandler}]
+    rcc:  { en: RESETS.RESET.timer, rst: RESETS.RESET.timer }
+
+  # --- ADC
+  - id: adc
+    template: adc
+    base: 0x4004C000
+    bus:  apb
+    clock_source: clk_adc
+    irq:  { num: 22, name: ADC_IRQ_FIFO_IRQHandler }
+    rcc:  { en: RESETS.RESET.adc, rst: RESETS.RESET.adc }
+    dma:
+      rx: { ctrl: dma, dreq: 36 }
+    channels:
+      ch0: GPIO26
+      ch1: GPIO27
+      ch2: GPIO28
+      ch3: GPIO29
+      ch4: temp_sensor                 # internal
+
+  # --- DMA controller
+  - id: dma
+    template: dma_controller
+    base: 0x50000000
+    bus:  ahb
+    clock_source: clk_sys
+    irq:  [{num: 11, name: DMA_IRQ_0_IRQHandler},
+           {num: 12, name: DMA_IRQ_1_IRQHandler}]
+    rcc:  { en: RESETS.RESET.dma, rst: RESETS.RESET.dma }
+
+# -----------------------------------------------------------------------------
+# Pin map  —  Pico module exposes 26 of 30 GPIOs on castellated pads.
+# (The other 4 are reserved for the on-module SMPS, status LED, VBUS sense.)
+#
+# constraints (delta 1):
+#   * power           — VCC / GND / VSYS / VBUS / 3V3
+#   * chip-enable     — RUN pin
+#   * analog-capable  — GP26..GP29 are wired to the 12-bit ADC
+#                       (still usable as digital GPIO; the constraint marks
+#                       the analog path as available, not exclusive)
+#   * module-reserved — used by the Pico module itself (SMPS, LED, VBUS sense)
+# -----------------------------------------------------------------------------
+pinout:
+  - { pad:  1, signal: GPIO0,  pico: GP0 }
+  - { pad:  2, signal: GPIO1,  pico: GP1 }
+  - { pad:  3, signal: GND,                                        constraints: [power] }
+  - { pad:  4, signal: GPIO2,  pico: GP2 }
+  - { pad:  5, signal: GPIO3,  pico: GP3 }
+  - { pad:  6, signal: GPIO4,  pico: GP4 }
+  - { pad:  7, signal: GPIO5,  pico: GP5 }
+  - { pad:  8, signal: GND,                                        constraints: [power] }
+  - { pad:  9, signal: GPIO6,  pico: GP6 }
+  - { pad: 10, signal: GPIO7,  pico: GP7 }
+  - { pad: 11, signal: GPIO8,  pico: GP8 }
+  - { pad: 12, signal: GPIO9,  pico: GP9 }
+  - { pad: 13, signal: GND,                                        constraints: [power] }
+  - { pad: 14, signal: GPIO10, pico: GP10 }
+  - { pad: 15, signal: GPIO11, pico: GP11 }
+  - { pad: 16, signal: GPIO12, pico: GP12 }
+  - { pad: 17, signal: GPIO13, pico: GP13 }
+  - { pad: 18, signal: GND,                                        constraints: [power] }
+  - { pad: 19, signal: GPIO14, pico: GP14 }
+  - { pad: 20, signal: GPIO15, pico: GP15 }
+  - { pad: 21, signal: GPIO16, pico: GP16 }
+  - { pad: 22, signal: GPIO17, pico: GP17 }
+  - { pad: 23, signal: GND,                                        constraints: [power] }
+  - { pad: 24, signal: GPIO18, pico: GP18 }
+  - { pad: 25, signal: GPIO19, pico: GP19 }
+  - { pad: 26, signal: GPIO20, pico: GP20 }
+  - { pad: 27, signal: GPIO21, pico: GP21 }
+  - { pad: 28, signal: GND,                                        constraints: [power] }
+  - { pad: 29, signal: GPIO22, pico: GP22 }
+  - { pad: 30, signal: RUN,                                        constraints: [chip-enable] }
+  - { pad: 31, signal: GPIO26, pico: GP26, adc: ch0,               constraints: [analog-capable] }
+  - { pad: 32, signal: GPIO27, pico: GP27, adc: ch1,               constraints: [analog-capable] }
+  - { pad: 33, signal: AGND,                                       constraints: [power, analog] }
+  - { pad: 34, signal: GPIO28, pico: GP28, adc: ch2,               constraints: [analog-capable] }
+  - { pad: 35, signal: ADC_VREF,                                   constraints: [analog] }
+  - { pad: 36, signal: 3V3,                                        constraints: [power] }
+  - { pad: 37, signal: 3V3_EN,                                     constraints: [power-control] }
+  - { pad: 38, signal: GND,                                        constraints: [power] }
+  - { pad: 39, signal: VSYS,                                       constraints: [power] }
+  - { pad: 40, signal: VBUS,                                       constraints: [power] }
+  # Reserved on the module (not exposed on the castellation):
+  - { signal: GPIO23, default_function: smps-control,              constraints: [module-reserved] }
+  - { signal: GPIO24, default_function: vbus-detect,               constraints: [module-reserved] }
+  - { signal: GPIO25, default_function: led-onboard, pico: LED,    constraints: [module-reserved] }
+  - { signal: GPIO29, default_function: vsys-divider, adc: ch3,    constraints: [module-reserved, analog-capable] }
+
+# -----------------------------------------------------------------------------
+# Vector table.  RP2040 NVIC has 26 IRQs.
+# -----------------------------------------------------------------------------
+interrupts:
+  - { num:  0, name: TIMER_IRQ_0_IRQHandler }
+  - { num:  1, name: TIMER_IRQ_1_IRQHandler }
+  - { num:  2, name: TIMER_IRQ_2_IRQHandler }
+  - { num:  3, name: TIMER_IRQ_3_IRQHandler }
+  - { num:  4, name: PWM_IRQ_WRAP_IRQHandler }
+  - { num:  5, name: USBCTRL_IRQHandler }
+  - { num:  6, name: XIP_IRQHandler }
+  - { num:  7, name: PIO0_IRQ_0_IRQHandler }
+  - { num:  8, name: PIO0_IRQ_1_IRQHandler }
+  - { num:  9, name: PIO1_IRQ_0_IRQHandler }
+  - { num: 10, name: PIO1_IRQ_1_IRQHandler }
+  - { num: 11, name: DMA_IRQ_0_IRQHandler }
+  - { num: 12, name: DMA_IRQ_1_IRQHandler }
+  - { num: 13, name: IO_IRQ_BANK0_IRQHandler }
+  - { num: 14, name: IO_IRQ_QSPI_IRQHandler }
+  - { num: 15, name: SIO_IRQ_PROC0_IRQHandler }
+  - { num: 16, name: SIO_IRQ_PROC1_IRQHandler }
+  - { num: 17, name: CLOCKS_IRQHandler }
+  - { num: 18, name: SPI0_IRQHandler }
+  - { num: 19, name: SPI1_IRQHandler }
+  - { num: 20, name: UART0_IRQHandler }
+  - { num: 21, name: UART1_IRQHandler }
+  - { num: 22, name: ADC_IRQ_FIFO_IRQHandler }
+  - { num: 23, name: I2C0_IRQHandler }
+  - { num: 24, name: I2C1_IRQHandler }
+  - { num: 25, name: RTC_IRQHandler }
+
+# -----------------------------------------------------------------------------
+# Golden config snippets.
+# -----------------------------------------------------------------------------
+system_examples:
+  pico_blink_led:
+    description: "Toggle the on-module LED on GPIO25."
+    clock: { sys: 125MHz, source: pll_sys, xosc: 12MHz, vco: 1500MHz, post_divs: [6, 2] }
+    gpio:  { instance: gpio, pin: 25, mode: output, function: sio }
+
+  uart0_115200_gp0_gp1:
+    clock: { sys: 125MHz, source: pll_sys, peri: 125MHz }
+    pinmux:
+      - { pin: GPIO0, function: uart0_tx }
+      - { pin: GPIO1, function: uart0_rx }
+    uart:
+      instance: uart0
+      baud: 115200
+      data_bits: 8
+      parity: none
+      stop_bits: "1"
+      mode: tx-rx

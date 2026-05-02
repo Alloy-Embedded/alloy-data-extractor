@@ -1,0 +1,810 @@
+# =============================================================================
+# STM32F103C8T6  —  ARM Cortex-M3 @ 72 MHz, 64 KB flash, 20 KB SRAM, LQFP-48
+# Most popular as the "Blue Pill" dev board.
+# =============================================================================
+# Hand-written reference under canonical-v2.  Aim: contain everything codegen
+# needs (linker, startup, GPIO, USART, SPI, I²C, ADC, timers, DMA) in <400
+# lines.  Comments are normative for cross-vendor consistency.
+
+schema: alloy.device.v2.1
+
+identity:
+  vendor: st
+  family: stm32f1
+  device: stm32f103c8t6
+  package: lqfp48
+  core:
+    isa:  armv7-m
+    name: cortex-m3
+    fpu:  false
+    mpu:  false
+    bits: 32
+    endianness: little
+    interrupt_lines: 60          # NVIC IRQ count (excl. system exceptions)
+    nvic_priority_bits: 4
+
+provenance:
+  primary:    cmsis-svd:STM32F103
+  secondary:  [st-cubemx-db:6.13.0, st-open-pin-data:0.6.0, rm0008]
+  authored:   hand
+  authored_on: 2026-05-01
+  notes: >-
+    SVD ships register layout + IRQ table.  CubeMX gives pin remap variants.
+    Reference manual RM0008 fills the few details neither source carries
+    (e.g. ADC max sample rate, default reset clock state).
+
+# -----------------------------------------------------------------------------
+# Memory map  →  drives linker.ld
+# -----------------------------------------------------------------------------
+memory:
+  - { id: flash, base: 0x08000000, size: 64KB, access: rx,  alias: code }
+  - { id: sram,  base: 0x20000000, size: 20KB, access: rwx, alias: data }
+  # System ROM (factory bootloader) at 0x1FFFF000 intentionally omitted —
+  # codegen never targets it for emitted code.
+
+# -----------------------------------------------------------------------------
+# Clock tree
+# -----------------------------------------------------------------------------
+clock:
+  oscillators:
+    hsi: { freq:  8MHz,        kind: rc-internal,      tolerance: 1% }
+    hse: { freq:  8MHz,        kind: crystal-external, range: [4MHz, 16MHz] }
+    lsi: { freq:  40kHz,       kind: rc-internal,      tolerance: 50% }
+    lse: { freq:  32.768kHz,   kind: crystal-external }
+
+  pll:
+    main:
+      input_sources: [hsi/2, hse, hse/2]
+      multiplier_range: [2, 16]    # PLLMUL field
+      max_output: 72MHz
+
+  domains:
+    - id: sysclk
+      sources: [hsi, hse, pll_main]
+      max:     72MHz
+      # Delta 12: register that selects the source.  Codegen writes
+      # `RCC.CFGR.SW = encoding[<source>]` to switch.
+      select_register:
+        reg: RCC.CFGR
+        field: SW
+        encoding: { hsi: 0, hse: 1, pll_main: 2 }
+    - id: hclk
+      source: sysclk
+      prescalers: [1,2,4,8,16,64,128,256,512]
+      max: 72MHz
+      select_register: { reg: RCC.CFGR, field: HPRE,
+                         encoding: { 1: 0, 2: 8, 4: 9, 8: 10, 16: 11,
+                                     64: 12, 128: 13, 256: 14, 512: 15 } }
+    - id: pclk1
+      source: hclk
+      prescalers: [1,2,4,8,16]
+      max: 36MHz
+      select_register: { reg: RCC.CFGR, field: PPRE1,
+                         encoding: { 1: 0, 2: 4, 4: 5, 8: 6, 16: 7 } }
+    - id: pclk2
+      source: hclk
+      prescalers: [1,2,4,8,16]
+      max: 72MHz
+      select_register: { reg: RCC.CFGR, field: PPRE2,
+                         encoding: { 1: 0, 2: 4, 4: 5, 8: 6, 16: 7 } }
+    - id: adc
+      source: pclk2
+      prescalers: [2,4,6,8]
+      max: 14MHz
+      select_register: { reg: RCC.CFGR, field: ADCPRE,
+                         encoding: { 2: 0, 4: 1, 6: 2, 8: 3 } }
+    - id: usb
+      source: pll_main
+      prescalers: [1, 1.5]
+      max: 48MHz
+      select_register: { reg: RCC.CFGR, field: USBPRE,
+                         encoding: { 1.5: 0, 1: 1 } }
+
+  # Delta 10: named system-clock profiles for codegen recipes like
+  # `pll-hse-72mhz` ("give me 72 MHz from the HSE crystal").
+  profiles:
+    - id: post-reset
+      kind: post-reset
+      sysclk: 8MHz
+      sysclk_source: hsi
+      flash_latency_ws: 0
+
+    - id: pll-hsi-64mhz
+      kind: recommended
+      sysclk: 64MHz
+      sysclk_source: pll_main
+      pll: { input: hsi/2, mul: 16 }      # 4 MHz × 16 = 64 MHz
+      hclk_div: 1
+      pclk1_div: 2                         # PCLK1 must be ≤ 36 MHz
+      pclk2_div: 1
+      flash_latency_ws: 2
+
+    - id: pll-hse-72mhz
+      kind: recommended
+      sysclk: 72MHz
+      sysclk_source: pll_main
+      pll: { input: hse, mul: 9 }          # 8 MHz × 9 = 72 MHz
+      hclk_div: 1
+      pclk1_div: 2
+      pclk2_div: 1
+      adc_div: 6                            # 72/6 = 12 MHz < 14 MHz max
+      usb_div: 1.5                          # 72/1.5 = 48 MHz
+      flash_latency_ws: 2
+
+  reset_state:
+    sysclk_source: hsi
+    sysclk_freq:   8MHz
+    flash_latency_ws: 0
+
+# -----------------------------------------------------------------------------
+# IP-block templates — register layout + capabilities defined ONCE per IP.
+# Per-instance data (base, IRQ, RCC bit, pinmux) lives in `peripherals` below.
+#
+# Delta 13 (v2.1): each template's `fields` map is the **opt-in subset** that
+# codegen flips at init / runtime.  The complete catalogue (every bit of
+# every register) lives in the SVD under provenance.primary; codegen pulls
+# from the SVD on demand for bulk ops (e.g. dumping every register on
+# fault).  Listing a field here is a *contract* that emitters can name-key
+# the bit.
+# -----------------------------------------------------------------------------
+templates:
+
+  gpio:
+    pins_per_port: 16
+    capabilities: [input, output, push-pull, open-drain, pull-up, pull-down,
+                   alternate-function, analog]
+    speeds_mhz: [2, 10, 50]
+    registers:
+      crl:  { offset: 0x00 }     # config low (pins 0..7)   — 4 bits per pin
+      crh:  { offset: 0x04 }     # config high (pins 8..15) — 4 bits per pin
+      idr:  { offset: 0x08, access: ro }
+      odr:  { offset: 0x0C }
+      bsrr: { offset: 0x10, access: wo }   # write-1-to-set/reset
+      brr:  { offset: 0x14, access: wo }
+      lckr: { offset: 0x18 }
+
+  usart:
+    capabilities: [tx, rx, dma, hardware-flow-control, smartcard, irda, lin]
+    options:
+      data_bits:    [8, 9]
+      parity:       [none, even, odd]
+      stop_bits:    ["0.5", "1", "1.5", "2"]
+      mode:         [tx, rx, tx-rx]
+      flow_control: [none, rts, cts, rts-cts]
+      oversampling: [16]                          # F1 only does 16×
+    max_baud: 4500000
+    registers:
+      sr:   { offset: 0x00 }
+      dr:   { offset: 0x04 }
+      brr:  { offset: 0x08 }
+      cr1:  { offset: 0x0C }
+      cr2:  { offset: 0x10 }
+      cr3:  { offset: 0x14 }
+      gtpr: { offset: 0x18 }
+    fields:                                          # opt-in subset (delta 13)
+      cr1.ue:   { bit: 13 }                          # USART enable
+      cr1.m:    { bit: 12,
+                  enum: { 8bit: 0, 9bit: 1 } }       # delta 2
+      cr1.pce:  { bit: 10 }                          # parity enable
+      cr1.ps:   { bit:  9,
+                  enum: { even: 0, odd: 1 } }
+      cr1.te:   { bit:  3 }
+      cr1.re:   { bit:  2 }
+      cr2.stop: { bits: [12, 13],
+                  enum: { "1": 0, "0.5": 1, "2": 2, "1.5": 3 } }
+      cr3.dmat: { bit:  7 }
+      cr3.dmar: { bit:  6 }
+      sr.tc:    { bit:  6 }
+      sr.txe:   { bit:  7 }
+      sr.rxne:  { bit:  5 }
+
+  spi:
+    capabilities: [master, slave, full-duplex, half-duplex, simplex-tx, simplex-rx,
+                   crc, dma]
+    options:
+      data_size:      [8, 16]
+      baud_prescaler: [2, 4, 8, 16, 32, 64, 128, 256]   # divides bus clock
+      modes:          [0, 1, 2, 3]
+      bit_order:      [msb-first, lsb-first]
+    registers:
+      cr1:    { offset: 0x00 }
+      cr2:    { offset: 0x04 }
+      sr:     { offset: 0x08 }
+      dr:     { offset: 0x0C }
+      crcpr:  { offset: 0x10 }
+      rxcrcr: { offset: 0x14, access: ro }
+      txcrcr: { offset: 0x18, access: ro }
+    fields:
+      cr1.spe:       { bit:  6 }
+      cr1.mstr:      { bit:  2 }
+      cr1.cpol:      { bit:  1 }
+      cr1.cpha:      { bit:  0 }
+      cr1.dff:       { bit: 11,
+                       enum: { 8bit: 0, 16bit: 1 } }                # delta 2
+      cr1.lsb_first: { bit:  7,
+                       enum: { msb_first: 0, lsb_first: 1 } }
+      cr1.br:        { bits: [3, 5],                                # delta 2
+                       enum: { div_2:   0, div_4:   1, div_8:   2,
+                               div_16:  3, div_32:  4, div_64:  5,
+                               div_128: 6, div_256: 7 } }
+      cr1.ssm:       { bit:  9 }
+      cr1.ssi:       { bit:  8 }
+      sr.txe:        { bit:  1 }
+      sr.rxne:       { bit:  0 }
+      sr.bsy:        { bit:  7 }
+
+  i2c:
+    capabilities: [master, slave, smbus, dma, 7-bit-addr, 10-bit-addr]
+    options:
+      speeds:     [100kHz, 400kHz]   # standard + fast
+      addressing: [7-bit, 10-bit]
+    registers:
+      cr1:   { offset: 0x00 }
+      cr2:   { offset: 0x04 }
+      oar1:  { offset: 0x08 }
+      oar2:  { offset: 0x0C }
+      dr:    { offset: 0x10 }
+      sr1:   { offset: 0x14 }
+      sr2:   { offset: 0x18, access: ro }
+      ccr:   { offset: 0x1C }
+      trise: { offset: 0x20 }
+    fields:
+      cr1.pe:    { bit:  0 }
+      cr1.start: { bit:  8 }
+      cr1.stop:  { bit:  9 }
+      cr1.ack:   { bit: 10 }
+      cr2.freq:  { bits: [0, 5] }    # APB1 freq in MHz, value = freq_mhz
+      ccr.f_s:   { bit: 15,
+                   enum: { standard: 0, fast: 1 } }       # delta 2
+      ccr.duty:  { bit: 14,
+                   enum: { "2-1": 0, "16-9": 1 } }
+      sr1.sb:    { bit:  0 }
+      sr1.addr:  { bit:  1 }
+      sr1.btf:   { bit:  2 }
+      sr1.rxne:  { bit:  6 }
+      sr1.txe:   { bit:  7 }
+
+  timer_general:
+    capabilities: [up, down, center-aligned, pwm, input-capture,
+                   output-compare, dma, encoder, one-pulse]
+    counter_bits: 16
+    channels: 4
+    # Delta 6: slave-mode trigger sources (TIMx_SMCR.TS field values).
+    # Used to chain timers — e.g. TIM3 starts when TIM2 hits OC1REF.
+    trigger_sources:
+      itr0: 0      # internal trigger 0 (per-instance peer mapping)
+      itr1: 1
+      itr2: 2
+      itr3: 3
+      ti1f_ed: 4
+      ti1fp1:  5
+      ti2fp2:  6
+      etrf:    7
+    # Delta 7: master output mode (TIMx_CR2.MMS field values) — what this
+    # timer broadcasts on its TRGO line for downstream timers / ADCs.
+    master_outputs:
+      reset:           0
+      enable:          1
+      update:          2
+      compare-pulse:   3
+      compare-oc1ref:  4
+      compare-oc2ref:  5
+      compare-oc3ref:  6
+      compare-oc4ref:  7
+    registers:
+      cr1:   { offset: 0x00 }
+      cr2:   { offset: 0x04 }
+      smcr:  { offset: 0x08 }
+      dier:  { offset: 0x0C }
+      sr:    { offset: 0x10 }
+      egr:   { offset: 0x14 }
+      ccmr1: { offset: 0x18 }
+      ccmr2: { offset: 0x1C }
+      ccer:  { offset: 0x20 }
+      cnt:   { offset: 0x24 }
+      psc:   { offset: 0x28 }
+      arr:   { offset: 0x2C }
+      ccr1:  { offset: 0x34 }
+      ccr2:  { offset: 0x38 }
+      ccr3:  { offset: 0x3C }
+      ccr4:  { offset: 0x40 }
+    fields:
+      cr1.cen:   { bit: 0 }
+      cr1.dir:   { bit: 4,
+                   enum: { up: 0, down: 1 } }
+      cr1.cms:   { bits: [5, 6],
+                   enum: { edge_aligned: 0, center_aligned_1: 1,
+                           center_aligned_2: 2, center_aligned_3: 3 } }
+      cr1.arpe:  { bit: 7 }
+      cr2.mms:   { bits: [4, 6] }      # values mapped via `master_outputs`
+      smcr.sms:  { bits: [0, 2] }       # slave-mode select
+      smcr.ts:   { bits: [4, 6] }       # values mapped via `trigger_sources`
+      egr.ug:    { bit: 0 }
+
+  # Delta 8: advanced-timer extension for TIM1/TIM8 (break + dead-time).
+  timer_advanced:
+    extends: timer_general
+    capabilities_extra: [break-input, dead-time, complementary-output,
+                         repetition-counter]
+    break_inputs: [bkin]                       # TIM1 only has BKIN on F1; F4+ adds BKIN2
+    deadtime_options:
+      # DTG bit pattern → (count_bits, max_ns at 72 MHz fclk).  Codegen picks the
+      # encoding that matches the requested dead-time without overflow.
+      - { dtg_prefix: "0", count_bits: 7, dtg_step_ns: 13.9, max_ns: 1763 }
+      - { dtg_prefix: "10", count_bits: 6, dtg_step_ns: 27.8, max_ns: 3514 }
+      - { dtg_prefix: "110", count_bits: 5, dtg_step_ns: 111, max_ns: 7000 }
+      - { dtg_prefix: "111", count_bits: 5, dtg_step_ns: 222, max_ns: 14000 }
+    registers_extra:
+      rcr:  { offset: 0x30 }      # repetition counter
+      bdtr: { offset: 0x44 }      # break + dead-time
+    fields_extra:
+      bdtr.dtg:  { bits: [0, 7] }
+      bdtr.lock: { bits: [8, 9] }
+      bdtr.moe:  { bit: 15 }       # main output enable
+      bdtr.aoe:  { bit: 14 }       # automatic output enable
+      bdtr.bkp:  { bit: 13 }
+      bdtr.bke:  { bit: 12 }
+
+  adc:
+    capabilities: [single, continuous, scan, injected, analog-watchdog,
+                   dma, dual-mode, calibration-rom]
+    options:
+      resolution:         [12]
+      sample_time_cycles: [1.5, 7.5, 13.5, 28.5, 41.5, 55.5, 71.5, 239.5]
+      # Delta 2: enum encoding for the SMP field (3 bits; same value applies
+      # per-channel).  Codegen names the option, looks up the encoding.
+      sample_time_encoding:
+        "1.5":   0
+        "7.5":   1
+        "13.5":  2
+        "28.5":  3
+        "41.5":  4
+        "55.5":  5
+        "71.5":  6
+        "239.5": 7
+    max_clock: 14MHz
+    registers:
+      sr:    { offset: 0x00 }
+      cr1:   { offset: 0x04 }
+      cr2:   { offset: 0x08 }
+      smpr1: { offset: 0x0C }
+      smpr2: { offset: 0x10 }
+      sqr1:  { offset: 0x2C }
+      sqr2:  { offset: 0x30 }
+      sqr3:  { offset: 0x34 }
+      dr:    { offset: 0x4C, access: ro }
+    fields:
+      cr1.scan:    { bit:  8 }
+      cr2.adon:    { bit:  0 }
+      cr2.cont:    { bit:  1 }
+      cr2.cal:     { bit:  2 }                      # calibration start
+      cr2.dma:     { bit:  8 }
+      cr2.exttrig: { bit: 20 }
+      cr2.extsel:  { bits: [17, 19] }                # external trigger select
+      cr2.swstart: { bit: 22 }
+      sr.eoc:      { bit:  1 }
+      sr.jeoc:     { bit:  2 }
+
+  dma_controller:
+    channels_per_controller: 7
+    capabilities: [memory-to-peripheral, peripheral-to-memory, memory-to-memory,
+                   circular, half-transfer-irq, transfer-complete-irq]
+
+# -----------------------------------------------------------------------------
+# Peripheral instances
+# -----------------------------------------------------------------------------
+peripherals:
+  # --- GPIO ports
+  - { id: gpioa, template: gpio, base: 0x40010800, bus: apb2,
+      rcc: { en: APB2ENR.IOPAEN, rst: APB2RSTR.IOPARST } }
+  - { id: gpiob, template: gpio, base: 0x40010C00, bus: apb2,
+      rcc: { en: APB2ENR.IOPBEN, rst: APB2RSTR.IOPBRST } }
+  - { id: gpioc, template: gpio, base: 0x40011000, bus: apb2,
+      rcc: { en: APB2ENR.IOPCEN, rst: APB2RSTR.IOPCRST } }
+  # GPIOD/E exist on bigger packages; LQFP48 doesn't bond their pads.
+  - { id: gpiod, template: gpio, base: 0x40011400, bus: apb2,
+      rcc: { en: APB2ENR.IOPDEN, rst: APB2RSTR.IOPDRST }, pinned: false }
+
+  # --- USART
+  - id: usart1
+    template: usart
+    base: 0x40013800
+    bus:  apb2
+    clock_source: pclk2          # max 72 MHz
+    irq:  { num: 37, name: USART1_IRQHandler }
+    rcc:  { en: APB2ENR.USART1EN, rst: APB2RSTR.USART1RST }
+    dma:
+      tx: { ctrl: dma1, channel: 4 }
+      rx: { ctrl: dma1, channel: 5 }
+    pin_options:
+      tx:  [{ pin: PA9,  remap: 0 }, { pin: PB6, remap: 1 }]
+      rx:  [{ pin: PA10, remap: 0 }, { pin: PB7, remap: 1 }]
+      cts: [{ pin: PA11, remap: 0 }]
+      rts: [{ pin: PA12, remap: 0 }]
+      ck:  [{ pin: PA8,  remap: 0 }]
+
+  - id: usart2
+    template: usart
+    base: 0x40004400
+    bus:  apb1
+    clock_source: pclk1          # max 36 MHz
+    max_clock_override: 36MHz    # delta 11 — F1 USART2 capped at PCLK1 max
+    irq:  { num: 38, name: USART2_IRQHandler }
+    rcc:  { en: APB1ENR.USART2EN, rst: APB1RSTR.USART2RST }
+    dma:
+      tx: { ctrl: dma1, channel: 7 }
+      rx: { ctrl: dma1, channel: 6 }
+    pin_options:
+      tx:  [{ pin: PA2, remap: 0 }]
+      rx:  [{ pin: PA3, remap: 0 }]
+      cts: [{ pin: PA0, remap: 0 }]
+      rts: [{ pin: PA1, remap: 0 }]
+      ck:  [{ pin: PA4, remap: 0 }]
+
+  - id: usart3
+    template: usart
+    base: 0x40004800
+    bus:  apb1
+    clock_source: pclk1
+    irq:  { num: 39, name: USART3_IRQHandler }
+    rcc:  { en: APB1ENR.USART3EN, rst: APB1RSTR.USART3RST }
+    dma:
+      tx: { ctrl: dma1, channel: 2 }
+      rx: { ctrl: dma1, channel: 3 }
+    pin_options:
+      tx:  [{ pin: PB10, remap: 0 }]
+      rx:  [{ pin: PB11, remap: 0 }]
+      cts: [{ pin: PB13, remap: 0 }]
+      rts: [{ pin: PB14, remap: 0 }]
+      ck:  [{ pin: PB12, remap: 0 }]
+
+  # --- SPI
+  - id: spi1
+    template: spi
+    base: 0x40013000
+    bus:  apb2
+    clock_source: pclk2
+    irq:  { num: 35, name: SPI1_IRQHandler }
+    rcc:  { en: APB2ENR.SPI1EN, rst: APB2RSTR.SPI1RST }
+    dma:
+      tx: { ctrl: dma1, channel: 3 }
+      rx: { ctrl: dma1, channel: 2 }
+    pin_options:
+      sck:  [{ pin: PA5, remap: 0 }, { pin: PB3, remap: 1 }]
+      miso: [{ pin: PA6, remap: 0 }, { pin: PB4, remap: 1 }]
+      mosi: [{ pin: PA7, remap: 0 }, { pin: PB5, remap: 1 }]
+      nss:  [{ pin: PA4, remap: 0 }, { pin: PA15, remap: 1 }]
+
+  - id: spi2
+    template: spi
+    base: 0x40003800
+    bus:  apb1
+    clock_source: pclk1
+    irq:  { num: 36, name: SPI2_IRQHandler }
+    rcc:  { en: APB1ENR.SPI2EN, rst: APB1RSTR.SPI2RST }
+    dma:
+      tx: { ctrl: dma1, channel: 5 }
+      rx: { ctrl: dma1, channel: 4 }
+    pin_options:
+      sck:  [{ pin: PB13 }]
+      miso: [{ pin: PB14 }]
+      mosi: [{ pin: PB15 }]
+      nss:  [{ pin: PB12 }]
+
+  # --- I²C
+  - id: i2c1
+    template: i2c
+    ip_version: i2c_v1_4_F1                # delta 9 — selects driver variant
+    base: 0x40005400
+    bus:  apb1
+    clock_source: pclk1
+    irq:  [{ num: 31, name: I2C1_EV_IRQHandler },
+           { num: 32, name: I2C1_ER_IRQHandler }]
+    rcc:  { en: APB1ENR.I2C1EN, rst: APB1RSTR.I2C1RST }
+    dma:
+      tx: { ctrl: dma1, channel: 6 }
+      rx: { ctrl: dma1, channel: 7 }
+    pin_options:
+      scl: [{ pin: PB6, remap: 0 }, { pin: PB8, remap: 1 }]
+      sda: [{ pin: PB7, remap: 0 }, { pin: PB9, remap: 1 }]
+    # Delta 5: STM32F1's I2C uses CCR/TRISE (not TIMINGR like F0/F3/F7+); we
+    # still surface a precomputed CCR + TRISE table per (speed × pclk1).  An
+    # F0/F3/G0 chip would use `timingr_value` instead — the field name is
+    # the difference.
+    timing_presets:
+      - { speed: 100kHz, source_clock: 36MHz, ccr: 0xB4, trise: 0x25 }   # standard
+      - { speed: 400kHz, source_clock: 36MHz, ccr: 0x801E, trise: 0x0C } # fast, 16/9 duty
+
+  - id: i2c2
+    template: i2c
+    base: 0x40005800
+    bus:  apb1
+    clock_source: pclk1
+    irq:  [{ num: 33, name: I2C2_EV_IRQHandler },
+           { num: 34, name: I2C2_ER_IRQHandler }]
+    rcc:  { en: APB1ENR.I2C2EN, rst: APB1RSTR.I2C2RST }
+    pin_options:
+      scl: [{ pin: PB10 }]
+      sda: [{ pin: PB11 }]
+
+  # --- Timers
+  - id: timer1
+    template: timer_advanced                   # delta 8 — break + dead-time
+    base: 0x40012C00
+    bus:  apb2
+    clock_source: pclk2_timer                  # ×2 if APB2 prescaler > 1
+    irq:  [{ num: 24, name: TIM1_BRK_IRQHandler },
+           { num: 25, name: TIM1_UP_IRQHandler },
+           { num: 26, name: TIM1_TRG_COM_IRQHandler },
+           { num: 27, name: TIM1_CC_IRQHandler }]
+    rcc:  { en: APB2ENR.TIM1EN, rst: APB2RSTR.TIM1RST }
+    # Delta 6 (per-instance override): for TIM1, ITR0..3 map to specific peers.
+    trigger_source_peers:
+      itr0: timer5
+      itr1: timer2
+      itr2: timer3
+      itr3: timer4
+    pin_options:
+      ch1:  [{ pin: PA8,  remap: 0 }]
+      ch2:  [{ pin: PA9,  remap: 0 }]
+      ch3:  [{ pin: PA10, remap: 0 }]
+      ch4:  [{ pin: PA11, remap: 0 }]
+      bkin: [{ pin: PB12, remap: 0 }, { pin: PA6, remap: 1 }]
+      ch1n: [{ pin: PB13, remap: 0 }, { pin: PA7, remap: 1 }]
+      ch2n: [{ pin: PB14, remap: 0 }, { pin: PB0, remap: 1 }]
+      ch3n: [{ pin: PB15, remap: 0 }, { pin: PB1, remap: 1 }]
+
+  - id: timer2
+    template: timer_general
+    base: 0x40000000
+    bus:  apb1
+    clock_source: pclk1_timer
+    irq:  { num: 28, name: TIM2_IRQHandler }
+    rcc:  { en: APB1ENR.TIM2EN, rst: APB1RSTR.TIM2RST }
+    pin_options:
+      ch1: [{ pin: PA0,  remap: 0 }, { pin: PA15, remap: 1 }]
+      ch2: [{ pin: PA1,  remap: 0 }, { pin: PB3,  remap: 1 }]
+      ch3: [{ pin: PA2,  remap: 0 }, { pin: PB10, remap: 2 }]
+      ch4: [{ pin: PA3,  remap: 0 }, { pin: PB11, remap: 2 }]
+
+  - id: timer3
+    template: timer_general
+    base: 0x40000400
+    bus:  apb1
+    clock_source: pclk1_timer
+    irq:  { num: 29, name: TIM3_IRQHandler }
+    rcc:  { en: APB1ENR.TIM3EN, rst: APB1RSTR.TIM3RST }
+    pin_options:
+      ch1: [{ pin: PA6, remap: 0 }, { pin: PB4,  remap: 2 }]
+      ch2: [{ pin: PA7, remap: 0 }, { pin: PB5,  remap: 2 }]
+      ch3: [{ pin: PB0, remap: 0 }]
+      ch4: [{ pin: PB1, remap: 0 }]
+
+  - id: timer4
+    template: timer_general
+    base: 0x40000800
+    bus:  apb1
+    clock_source: pclk1_timer
+    irq:  { num: 30, name: TIM4_IRQHandler }
+    rcc:  { en: APB1ENR.TIM4EN, rst: APB1RSTR.TIM4RST }
+    pin_options:
+      ch1: [{ pin: PB6 }]
+      ch2: [{ pin: PB7 }]
+      ch3: [{ pin: PB8 }]
+      ch4: [{ pin: PB9 }]
+
+  # --- ADC
+  - id: adc1
+    template: adc
+    ip_version: aditf_v3_0_F1                 # delta 9 — F1 ADC variant
+    base: 0x40012400
+    bus:  apb2
+    clock_source: adc                          # divided down from pclk2
+    irq:  { num: 18, name: ADC1_2_IRQHandler } # shared with adc2
+    rcc:  { en: APB2ENR.ADC1EN, rst: APB2RSTR.ADC1RST }
+    dma:
+      rx: { ctrl: dma1, channel: 1 }
+    channels:
+      ch0:  PA0
+      ch1:  PA1
+      ch2:  PA2
+      ch3:  PA3
+      ch4:  PA4
+      ch5:  PA5
+      ch6:  PA6
+      ch7:  PA7
+      ch8:  PB0
+      ch9:  PB1
+      ch16: temp_sensor                        # internal
+      ch17: vrefint                            # internal
+    # Delta 3: factory-burned calibration constants in flash.  Codegen reads
+    # these to convert raw ADC values to °C / mV with vendor-promised
+    # accuracy.  Addresses are F1-specific (0x1FFFF7xx range).
+    calibration:
+      vrefint:     { rom_addr: 0x1FFFF7BA, size_bits: 16, nominal_mv: 3300,
+                     description: "VREFINT measured at VDDA = 3.3 V, 30 °C" }
+      ts_cal_low:  { rom_addr: 0x1FFFF7B8, size_bits: 16, temp_celsius: 30,
+                     vdda_calibration: 3300 }
+      # F1 has only TS_CAL1 (no high-temp point); slope is from datasheet
+      # (4.3 mV/°C typical).
+      ts_slope_uv_per_c: 4300
+    # Delta 4: external trigger sources (EXTSEL field values).  Used by the
+    # triggered-conversion codepath.
+    external_triggers:
+      regular:                                 # via cr2.extsel
+        - { source: timer1.cc1,  extsel: 0, polarity: rising }
+        - { source: timer1.cc2,  extsel: 1, polarity: rising }
+        - { source: timer1.cc3,  extsel: 2, polarity: rising }
+        - { source: timer2.cc2,  extsel: 3, polarity: rising }
+        - { source: timer3.trgo, extsel: 4, polarity: rising }
+        - { source: timer4.cc4,  extsel: 5, polarity: rising }
+        - { source: exti.line11, extsel: 6, polarity: rising }
+        - { source: software,    extsel: 7, polarity: none }
+      injected:                                # via cr2.jextsel (separate field)
+        - { source: timer1.trgo,  jextsel: 0 }
+        - { source: timer1.cc4,   jextsel: 1 }
+        - { source: timer2.trgo,  jextsel: 2 }
+        - { source: timer2.cc1,   jextsel: 3 }
+        - { source: timer3.cc4,   jextsel: 4 }
+        - { source: timer4.trgo,  jextsel: 5 }
+        - { source: exti.line15,  jextsel: 6 }
+        - { source: software,     jextsel: 7 }
+
+  - id: adc2
+    template: adc
+    base: 0x40012800
+    bus:  apb2
+    clock_source: adc
+    irq:  { num: 18, name: ADC1_2_IRQHandler }   # shared
+    rcc:  { en: APB2ENR.ADC2EN, rst: APB2RSTR.ADC2RST }
+    channels:
+      ch0:  PA0
+      # … same map as adc1 (mux is inside the IP)
+
+  # --- DMA
+  - id: dma1
+    template: dma_controller
+    base: 0x40020000
+    bus:  ahb
+    rcc:  { en: AHBENR.DMA1EN }
+    irq:  [{ num: 11, name: DMA1_Channel1_IRQHandler },
+           { num: 12, name: DMA1_Channel2_IRQHandler },
+           { num: 13, name: DMA1_Channel3_IRQHandler },
+           { num: 14, name: DMA1_Channel4_IRQHandler },
+           { num: 15, name: DMA1_Channel5_IRQHandler },
+           { num: 16, name: DMA1_Channel6_IRQHandler },
+           { num: 17, name: DMA1_Channel7_IRQHandler }]
+
+# -----------------------------------------------------------------------------
+# Pin map for LQFP-48
+#
+# Each row carries:
+#   * pin / signal              — silk-screen number ↔ canonical signal name
+#   * `ft: true`                — 5V-tolerant input  (delta 1, kind a)
+#   * `constraints: [...]`      — additional hard restrictions   (delta 1, kind b)
+#         * `analog-only`       — pad has no digital input buffer
+#         * `power`             — power/ground rail, never routable
+#         * `boot`              — sampled at reset for boot-mode select
+#         * `debug-default`     — JTAG/SWD by default (free only after re-map)
+#   * `default_function: <fn>`  — what the pad does at reset
+# -----------------------------------------------------------------------------
+pinout:
+  - { pin:  1, signal: VBAT,                                constraints: [power] }
+  - { pin:  2, signal: PC13, ft: false,                     constraints: [low-drive] }   # tamper / RTC alarm output
+  - { pin:  3, signal: PC14, ft: false,                     constraints: [low-drive] }   # OSC32_IN
+  - { pin:  4, signal: PC15, ft: false,                     constraints: [low-drive] }   # OSC32_OUT
+  - { pin:  5, signal: PD0,  pinned: false,                 default_function: osc-in }
+  - { pin:  6, signal: PD1,  pinned: false,                 default_function: osc-out }
+  - { pin:  7, signal: NRST,                                constraints: [reset] }
+  - { pin:  8, signal: VSSA,                                constraints: [power] }
+  - { pin:  9, signal: VDDA,                                constraints: [power] }
+  - { pin: 10, signal: PA0,  ft: true }
+  - { pin: 11, signal: PA1,  ft: true }
+  - { pin: 12, signal: PA2,  ft: true }
+  - { pin: 13, signal: PA3,  ft: true }
+  - { pin: 14, signal: PA4 }
+  - { pin: 15, signal: PA5 }                  # default Blue Pill LED on Nucleo? No — F103 Blue Pill LED is PC13
+  - { pin: 16, signal: PA6,  ft: true }
+  - { pin: 17, signal: PA7,  ft: true }
+  - { pin: 18, signal: PB0,  ft: true }
+  - { pin: 19, signal: PB1,  ft: true }
+  - { pin: 20, signal: PB2,  ft: true,                      constraints: [boot] }       # BOOT1
+  - { pin: 21, signal: PB10, ft: true }
+  - { pin: 22, signal: PB11, ft: true }
+  - { pin: 23, signal: VSS_1,                               constraints: [power] }
+  - { pin: 24, signal: VDD_1,                               constraints: [power] }
+  - { pin: 25, signal: PB12, ft: true }
+  - { pin: 26, signal: PB13, ft: true }
+  - { pin: 27, signal: PB14, ft: true }
+  - { pin: 28, signal: PB15, ft: true }
+  - { pin: 29, signal: PA8,  ft: true }
+  - { pin: 30, signal: PA9,  ft: true }
+  - { pin: 31, signal: PA10, ft: true }
+  - { pin: 32, signal: PA11, ft: true,                      default_function: usb-dm }
+  - { pin: 33, signal: PA12, ft: true,                      default_function: usb-dp }
+  - { pin: 34, signal: PA13, ft: true,                      default_function: swdio,  constraints: [debug-default] }
+  - { pin: 35, signal: VSS_2,                               constraints: [power] }
+  - { pin: 36, signal: VDD_2,                               constraints: [power] }
+  - { pin: 37, signal: PA14, ft: true,                      default_function: swclk,  constraints: [debug-default] }
+  - { pin: 38, signal: PA15, ft: true,                      default_function: jtdi,   constraints: [debug-default] }
+  - { pin: 39, signal: PB3,  ft: true,                      default_function: jtdo,   constraints: [debug-default] }
+  - { pin: 40, signal: PB4,  ft: true,                      default_function: jtrst,  constraints: [debug-default] }
+  - { pin: 41, signal: PB5 }
+  - { pin: 42, signal: PB6,  ft: true }
+  - { pin: 43, signal: PB7,  ft: true }
+  - { pin: 44, signal: BOOT0,                               constraints: [boot] }
+  - { pin: 45, signal: PB8,  ft: true }
+  - { pin: 46, signal: PB9,  ft: true }
+  - { pin: 47, signal: VSS_3,                               constraints: [power] }
+  - { pin: 48, signal: VDD_3,                               constraints: [power] }
+
+# -----------------------------------------------------------------------------
+# Vector table — one row per NVIC IRQ.  Used by the startup emitter.
+# -----------------------------------------------------------------------------
+interrupts:
+  - { num:  0, name: WWDG_IRQHandler }
+  - { num:  1, name: PVD_IRQHandler }
+  - { num:  2, name: TAMPER_IRQHandler }
+  - { num:  3, name: RTC_IRQHandler }
+  - { num:  4, name: FLASH_IRQHandler }
+  - { num:  5, name: RCC_IRQHandler }
+  - { num:  6, name: EXTI0_IRQHandler }
+  - { num:  7, name: EXTI1_IRQHandler }
+  - { num:  8, name: EXTI2_IRQHandler }
+  - { num:  9, name: EXTI3_IRQHandler }
+  - { num: 10, name: EXTI4_IRQHandler }
+  - { num: 11, name: DMA1_Channel1_IRQHandler }
+  - { num: 12, name: DMA1_Channel2_IRQHandler }
+  - { num: 13, name: DMA1_Channel3_IRQHandler }
+  - { num: 14, name: DMA1_Channel4_IRQHandler }
+  - { num: 15, name: DMA1_Channel5_IRQHandler }
+  - { num: 16, name: DMA1_Channel6_IRQHandler }
+  - { num: 17, name: DMA1_Channel7_IRQHandler }
+  - { num: 18, name: ADC1_2_IRQHandler }
+  - { num: 19, name: USB_HP_CAN1_TX_IRQHandler }
+  - { num: 20, name: USB_LP_CAN1_RX0_IRQHandler }
+  - { num: 21, name: CAN1_RX1_IRQHandler }
+  - { num: 22, name: CAN1_SCE_IRQHandler }
+  - { num: 23, name: EXTI9_5_IRQHandler }
+  - { num: 24, name: TIM1_BRK_IRQHandler }
+  - { num: 25, name: TIM1_UP_IRQHandler }
+  - { num: 26, name: TIM1_TRG_COM_IRQHandler }
+  - { num: 27, name: TIM1_CC_IRQHandler }
+  - { num: 28, name: TIM2_IRQHandler }
+  - { num: 29, name: TIM3_IRQHandler }
+  - { num: 30, name: TIM4_IRQHandler }
+  - { num: 31, name: I2C1_EV_IRQHandler }
+  - { num: 32, name: I2C1_ER_IRQHandler }
+  - { num: 33, name: I2C2_EV_IRQHandler }
+  - { num: 34, name: I2C2_ER_IRQHandler }
+  - { num: 35, name: SPI1_IRQHandler }
+  - { num: 36, name: SPI2_IRQHandler }
+  - { num: 37, name: USART1_IRQHandler }
+  - { num: 38, name: USART2_IRQHandler }
+  - { num: 39, name: USART3_IRQHandler }
+  - { num: 40, name: EXTI15_10_IRQHandler }
+  - { num: 41, name: RTC_Alarm_IRQHandler }
+  - { num: 42, name: USBWakeUp_IRQHandler }
+
+# -----------------------------------------------------------------------------
+# Golden config snippets — used by tests + as worked examples for codegen.
+# Optional; codegen does NOT depend on them, but they pin known-good shapes.
+# -----------------------------------------------------------------------------
+system_examples:
+  blink_pc13:
+    description: "Blue-Pill on-board LED on PC13."
+    clock: { sysclk: 72MHz, source: pll_main, pll_input: hse, pll_mul: 9, hse: 8MHz }
+    gpio:  { instance: gpioc, pin: 13, mode: output-push-pull, speed: 2MHz }
+
+  uart1_115200_pa9_pa10:
+    clock: { sysclk: 72MHz, source: pll_main, pll_input: hse, pll_mul: 9, hse: 8MHz }
+    pinmux:
+      - { pin: PA9,  function: usart1_tx, mode: alternate-push-pull, speed: 50MHz }
+      - { pin: PA10, function: usart1_rx, mode: input-floating }
+    usart:
+      instance: usart1
+      baud: 115200
+      data_bits: 8
+      parity: none
+      stop_bits: "1"
+      mode: tx-rx

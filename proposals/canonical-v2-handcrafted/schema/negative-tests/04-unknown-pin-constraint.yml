@@ -1,0 +1,19 @@
+# Drift class: pinout entry uses a constraint that's not in the enum.
+# Expected error: pinout[0].constraints[0] is not one of [analog-only, …].
+
+schema: alloy.device.v2.1
+
+identity:
+  vendor: st
+  family: stm32f1
+  device: stm32f103c8t6
+  core: { isa: armv7-m, name: cortex-m3, bits: 32 }
+
+provenance: { primary: cmsis-svd:STM32F103, authored: hand, authored_on: "2026-05-01" }
+memory:     [{ id: flash, base: 0x08000000, size: 64KB, access: rx }]
+clock:
+  oscillators: { hsi: { freq: 8MHz, kind: rc-internal } }
+  domains:     [{ id: sysclk, sources: [hsi], max: 8MHz }]
+peripherals: [{ id: gpioa, template: gpio, base: 0x40010800, bus: apb2 }]
+pinout:
+  - { pin: 1, signal: PA0, constraints: [magic-pin] }                 # not a valid constraint

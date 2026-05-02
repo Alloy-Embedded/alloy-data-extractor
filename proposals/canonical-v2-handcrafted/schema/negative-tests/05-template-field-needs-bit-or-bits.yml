@@ -1,0 +1,26 @@
+# Drift class: template field declared without a bit / bits position.
+# Expected error: templates.usart.fields.cr1.ue must satisfy oneOf
+# (one of bit | bits required).
+
+schema: alloy.device.v2.1
+
+identity:
+  vendor: st
+  family: stm32f1
+  device: stm32f103c8t6
+  core: { isa: armv7-m, name: cortex-m3, bits: 32 }
+
+provenance: { primary: cmsis-svd:STM32F103, authored: hand, authored_on: "2026-05-01" }
+memory:     [{ id: flash, base: 0x08000000, size: 64KB, access: rx }]
+clock:
+  oscillators: { hsi: { freq: 8MHz, kind: rc-internal } }
+  domains:     [{ id: sysclk, sources: [hsi], max: 8MHz }]
+templates:
+  usart:
+    registers:
+      cr1: { offset: 0x0C }
+    fields:
+      # No `bit` and no `bits` — extractor forgot to fill it in
+      cr1.ue: { description: "USART enable" }
+peripherals: [{ id: usart1, template: usart, base: 0x40013800, bus: apb2 }]
+pinout:      [{ pin: 1, signal: PA9 }]

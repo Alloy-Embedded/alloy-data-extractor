@@ -1,0 +1,539 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alloy-embedded.dev/schema/canonical-device-v2_1.schema.json",
+  "title": "alloy.device.v2.1",
+  "description": "Hand-crafted canonical device YAML — proposal v2.1.  Catches structural drift (missing required keys, wrong types, malformed units) while staying lenient on vendor-specific extensions.",
+
+  "type": "object",
+  "required": ["schema", "identity", "provenance", "memory", "clock", "peripherals", "pinout"],
+  "additionalProperties": true,
+
+  "properties": {
+    "schema":         { "const": "alloy.device.v2.1" },
+    "identity":       { "$ref": "#/$defs/identity" },
+    "provenance":     { "$ref": "#/$defs/provenance" },
+    "memory":         { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/memory_region" } },
+    "clock":          { "$ref": "#/$defs/clock" },
+    "templates":      { "type": "object", "additionalProperties": { "$ref": "#/$defs/template" } },
+    "peripherals":    { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/peripheral" } },
+    "pinout":         { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/pin" } },
+    "interrupts":     { "$ref": "#/$defs/interrupts" },
+    "fuses":          { "type": "object" },
+    "system_examples":{ "type": "object", "additionalProperties": true }
+  },
+
+  "$defs": {
+
+    "id_lower":     { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+    "symbol":       { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+    "hex_or_int":   { "oneOf": [
+                        { "type": "integer", "minimum": 0 },
+                        { "type": "string",  "pattern": "^0x[0-9A-Fa-f]+$" }
+                    ] },
+    "size_with_unit": {
+      "type": "string",
+      "description": "Byte size with KB/MB/GB suffix (e.g. 64KB, 2MB, 1GB) or B suffix.",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(B|KB|MB|GB)$"
+    },
+    "freq_with_unit": {
+      "type": "string",
+      "description": "Frequency with Hz/kHz/MHz/GHz suffix.  Decimal allowed (e.g. 32.768kHz, 8.5MHz).",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(Hz|kHz|MHz|GHz)$"
+    },
+    "freq_or_int": {
+      "oneOf": [
+        { "$ref": "#/$defs/freq_with_unit" },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "register_ref": {
+      "type": "string",
+      "description": "Register reference.  Accepts single-component (AVR-style: ``CLKPR``) or dotted-path (ARM-style: ``RCC.CFGR``, ``APB1ENR.USART2EN``).",
+      "pattern": "^[A-Z][A-Z0-9_]*(\\.[A-Z][A-Z0-9_]*)*$"
+    },
+
+    "identity": {
+      "type": "object",
+      "required": ["vendor", "family", "device", "core"],
+      "additionalProperties": true,
+      "properties": {
+        "vendor":        { "$ref": "#/$defs/id_lower" },
+        "family":        { "$ref": "#/$defs/id_lower" },
+        "device":        { "$ref": "#/$defs/id_lower" },
+        "variant":       { "type": "string" },
+        "package":       { "type": "string" },
+        "flash_size":    { "$ref": "#/$defs/size_with_unit" },
+        "ram_size":      { "$ref": "#/$defs/size_with_unit" },
+        "description":   { "type": "string" },
+        "core":          { "$ref": "#/$defs/core" }
+      }
+    },
+
+    "core": {
+      "type": "object",
+      "required": ["isa", "name", "bits"],
+      "additionalProperties": true,
+      "properties": {
+        "isa":                 { "type": "string" },
+        "name":                { "type": "string" },
+        "fpu":                 { "type": "boolean" },
+        "mpu":                 { "type": "boolean" },
+        "bits":                { "type": "integer", "enum": [8, 16, 32, 64] },
+        "endianness":          { "type": "string", "enum": ["little", "big"] },
+        "interrupt_lines":     { "type": "integer", "minimum": 0 },
+        "nvic_priority_bits":  { "type": "integer", "minimum": 0 },
+        "multicore":           { "$ref": "#/$defs/multicore" }
+      }
+    },
+
+    "multicore": {
+      "type": "object",
+      "required": ["topology", "cores"],
+      "additionalProperties": true,
+      "properties": {
+        "topology": {
+          "type": "string",
+          "enum": ["single_core", "symmetric_dual_core", "xtensa_asymmetric_dual_core"]
+        },
+        "cores": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "role"],
+            "additionalProperties": true,
+            "properties": {
+              "id":   { "$ref": "#/$defs/id_lower" },
+              "role": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "required": ["primary", "authored"],
+      "additionalProperties": true,
+      "properties": {
+        "primary":     { "type": "string" },
+        "secondary":   { "type": "array", "items": { "type": "string" } },
+        "authored":    { "type": "string", "enum": ["hand", "auto", "auto+hand"] },
+        "authored_on": { "type": "string", "format": "date" },
+        "notes":       { "type": "string" }
+      }
+    },
+
+    "memory_region": {
+      "type": "object",
+      "required": ["id", "base", "size", "access"],
+      "additionalProperties": true,
+      "properties": {
+        "id":            { "$ref": "#/$defs/id_lower" },
+        "base":          { "$ref": "#/$defs/hex_or_int" },
+        "size":          { "$ref": "#/$defs/size_with_unit" },
+        "access":        {
+          "type": "string",
+          "description": "Memory access flags.  Common: r, rw, rwx, ro, rx, wo.",
+          "enum": ["r", "rw", "rwx", "rx", "ro", "wo"]
+        },
+        "alias":         { "type": "string" },
+        "address_space": {
+          "type": "string",
+          "description": "Logical address space for Harvard chips and side-spaces.",
+          "enum": ["program", "data", "instruction", "eeprom", "fuse", "signature"]
+        },
+        "backing":       { "type": "string" },
+        "role":          { "type": "string" },
+        "banks":         { "type": "array", "items": { "$ref": "#/$defs/id_lower" } },
+        "default_use":   { "type": "string" },
+        "survives":      { "type": "string" }
+      }
+    },
+
+    "clock": {
+      "type": "object",
+      "required": ["oscillators", "domains"],
+      "additionalProperties": true,
+      "properties": {
+        "oscillators": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/oscillator" }
+        },
+        "pll": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/pll_config" }
+        },
+        "domains": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/clock_domain" }
+        },
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/clock_profile" }
+        },
+        "reset_state": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+
+    "oscillator": {
+      "type": "object",
+      "required": ["freq", "kind"],
+      "additionalProperties": true,
+      "properties": {
+        "freq":      { "$ref": "#/$defs/freq_with_unit" },
+        "kind":      { "type": "string",
+                        "enum": ["rc-internal", "rc", "crystal-external",
+                                 "crystal-internal", "synthesised"] },
+        "tolerance": { "type": "string" },
+        "range":     { "type": "array", "minItems": 2, "maxItems": 2,
+                        "items": { "$ref": "#/$defs/freq_with_unit" } },
+        "purpose":   { "type": "string" },
+        "optional":  { "type": "boolean" },
+        "source":    { "type": "string" }
+      }
+    },
+
+    "pll_config": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "input_sources":     { "type": "array", "items": { "type": "string" } },
+        "multiplier_range":  { "type": "array", "minItems": 2, "maxItems": 2,
+                                "items": { "type": "integer" } },
+        "outputs":           { "type": "array", "items": { "$ref": "#/$defs/freq_with_unit" } },
+        "max_output":        { "$ref": "#/$defs/freq_with_unit" },
+        "vco_range":         { "type": "array", "minItems": 2, "maxItems": 2,
+                                "items": { "$ref": "#/$defs/freq_with_unit" } },
+        "vco_output_target": { "$ref": "#/$defs/freq_with_unit" },
+        "post_divs":         { "type": "array", "items": { "type": "integer" } },
+        "post_div_chain":    { "type": "array", "items": { "type": "integer" } },
+        "output":            { "$ref": "#/$defs/freq_with_unit" }
+      }
+    },
+
+    "clock_domain": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": true,
+      "properties": {
+        "id":          { "$ref": "#/$defs/id_lower" },
+        "source":      { "type": "string" },
+        "sources":     { "type": "array", "items": { "type": "string" } },
+        "prescalers":  { "type": "array", "items": { "type": "number" } },
+        "max":         { "$ref": "#/$defs/freq_with_unit" },
+        "default":     { "$ref": "#/$defs/freq_with_unit" },
+        "target_freq": { "$ref": "#/$defs/freq_with_unit" },
+        "purpose":     { "type": "string" },
+        "notes":       { "type": "string" },
+        "select_register":    { "$ref": "#/$defs/select_register" },
+        "auxsrc_register":    { "$ref": "#/$defs/select_register" },
+        "prescaler_register": { "$ref": "#/$defs/select_register" },
+        "select_task":        { "type": "object", "additionalProperties": true }
+      },
+      "anyOf": [
+        { "required": ["source"] },
+        { "required": ["sources"] }
+      ]
+    },
+
+    "select_register": {
+      "type": "object",
+      "required": ["reg", "field", "encoding"],
+      "additionalProperties": false,
+      "properties": {
+        "reg":      { "$ref": "#/$defs/register_ref" },
+        "field":    { "$ref": "#/$defs/symbol" },
+        "encoding": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+
+    "clock_profile": {
+      "type": "object",
+      "required": ["id", "kind", "sysclk", "sysclk_source"],
+      "additionalProperties": true,
+      "properties": {
+        "id":              { "$ref": "#/$defs/id_lower" },
+        "kind":            {
+          "type": "string",
+          "enum": ["post-reset", "recommended", "alternative", "low-power", "safe"]
+        },
+        "sysclk":          { "$ref": "#/$defs/freq_with_unit" },
+        "sysclk_source":   { "type": "string" },
+        "pll":             { "type": "object", "additionalProperties": true },
+        "pll_input":       { "type": "string" },
+        "pll_mul":         { "type": "integer" },
+        "hse":             { "$ref": "#/$defs/freq_with_unit" },
+        "fuse_low":        { "$ref": "#/$defs/hex_or_int" },
+        "prescaler":       { "type": "integer" },
+        "hclk_div":        { "type": "integer" },
+        "pclk1_div":       { "type": "integer" },
+        "pclk2_div":       { "type": "integer" },
+        "adc_div":         { "type": "integer" },
+        "usb_div":         { "type": "number" },
+        "flash_latency_ws":{ "type": "integer" },
+        "lfclk_source":    { "type": "string" },
+        "apb":             { "$ref": "#/$defs/freq_with_unit" },
+        "cpu_div":         { "type": "integer" },
+        "pll_output":      { "$ref": "#/$defs/freq_with_unit" },
+        "pll_sys":         { "type": "object", "additionalProperties": true },
+        "pll_usb":         { "type": "object", "additionalProperties": true },
+        "clk_peri":        { "$ref": "#/$defs/freq_with_unit" },
+        "notes":           { "type": "string" }
+      }
+    },
+
+    "template": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "extends":           { "type": "string" },
+        "capabilities":      { "type": "array", "items": { "type": "string" } },
+        "capabilities_extra":{ "type": "array", "items": { "type": "string" } },
+        "options":           { "type": "object", "additionalProperties": true },
+        "max_clock":         { "$ref": "#/$defs/freq_with_unit" },
+        "max_baud":          { "type": "integer", "minimum": 0 },
+        "pins_per_port":     { "type": "integer", "minimum": 1 },
+        "speeds_mhz":        { "type": "array", "items": { "type": "integer" } },
+        "channels":          { "type": "integer", "minimum": 0 },
+        "counter_bits":      { "type": "integer" },
+        "counter_bits_options": { "type": "array", "items": { "type": "integer" } },
+        "trigger_sources":   { "type": "object",
+                                "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "master_outputs":    { "type": "object",
+                                "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "waveform_modes":    { "type": "object",
+                                "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "deadtime_options":  { "type": "array",
+                                "items": { "type": "object", "additionalProperties": true } },
+        "break_inputs":      { "type": "array", "items": { "type": "string" } },
+        "registers":         { "type": "object",
+                                "additionalProperties": { "$ref": "#/$defs/template_register" } },
+        "registers_extra":   { "type": "object",
+                                "additionalProperties": { "$ref": "#/$defs/template_register" } },
+        "fields":            { "type": "object",
+                                "additionalProperties": { "$ref": "#/$defs/template_field" } },
+        "fields_extra":      { "type": "object",
+                                "additionalProperties": { "$ref": "#/$defs/template_field" } },
+        "notes":              { "type": "string" }
+      }
+    },
+
+    "template_register": {
+      "type": "object",
+      "required": ["offset"],
+      "additionalProperties": true,
+      "properties": {
+        "offset": { "$ref": "#/$defs/hex_or_int" },
+        "access": { "type": "string", "enum": ["ro", "rw", "wo"] },
+        "stride": { "$ref": "#/$defs/hex_or_int" },
+        "count":  { "type": "integer", "minimum": 1 },
+        "role":   { "type": "string" }
+      }
+    },
+
+    "template_field": {
+      "type": "object",
+      "additionalProperties": true,
+      "oneOf": [
+        { "required": ["bit"] },
+        { "required": ["bits"] }
+      ],
+      "properties": {
+        "bit":  { "type": "integer", "minimum": 0, "maximum": 63 },
+        "bits": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "integer", "minimum": 0, "maximum": 63 }
+        },
+        "enum": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Named bit-value lookups; codegen flips by name, schema enforces uniqueness.",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "access": { "type": "string", "enum": ["ro", "rw", "wo"] }
+      }
+    },
+
+    "peripheral": {
+      "type": "object",
+      "required": ["id", "template"],
+      "additionalProperties": true,
+      "properties": {
+        "id":             { "$ref": "#/$defs/id_lower" },
+        "template":       { "type": "string" },
+        "ip_version":     { "type": "string" },
+        "alias":          { "type": "string" },
+        "base":           { "$ref": "#/$defs/hex_or_int" },
+        "bus":            { "$ref": "#/$defs/id_lower" },
+        "clock_source":   { "$ref": "#/$defs/id_lower" },
+        "max_clock_override": { "$ref": "#/$defs/freq_or_int" },
+        "rcc": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "en":  { "type": ["string", "null"] },
+            "rst": { "type": ["string", "null"] }
+          }
+        },
+        "irq": { "$ref": "#/$defs/irq_or_irq_array" },
+        "dma": { "type": "object", "additionalProperties": true },
+        "pin_options":    { "type": "object", "additionalProperties": true },
+        "pin_count":      { "type": "integer", "minimum": 1 },
+        "pinned":         { "type": "boolean" },
+        "mutex_group":    { "type": "string" },
+        "power_reduction":{ "type": "object", "additionalProperties": true },
+        "calibration":    { "$ref": "#/$defs/adc_calibration" },
+        "external_triggers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": true }
+          }
+        },
+        "timing_presets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["speed", "source_clock"],
+            "properties": {
+              "speed":         { "$ref": "#/$defs/freq_with_unit" },
+              "source_clock":  { "$ref": "#/$defs/freq_with_unit" },
+              "timingr":       { "$ref": "#/$defs/hex_or_int" },
+              "ccr":           { "$ref": "#/$defs/hex_or_int" },
+              "trise":         { "$ref": "#/$defs/hex_or_int" }
+            }
+          }
+        },
+        "trigger_source_peers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "channels":      { "type": "object", "additionalProperties": true },
+        "counter_bits_default": { "type": "integer" },
+        "capabilities_extra":   { "type": "array", "items": { "type": "string" } },
+        "conflicts_with":       { "type": "array", "items": { "type": "string" } },
+        "notes":         { "type": "string" }
+      }
+    },
+
+    "irq_or_irq_array": {
+      "oneOf": [
+        { "$ref": "#/$defs/irq_entry" },
+        { "type": "array", "items": { "$ref": "#/$defs/irq_entry" } }
+      ]
+    },
+
+    "irq_entry": {
+      "type": "object",
+      "required": ["num", "name"],
+      "additionalProperties": true,
+      "properties": {
+        "num":  { "type": "integer", "minimum": 0 },
+        "name": { "$ref": "#/$defs/symbol" }
+      }
+    },
+
+    "adc_calibration": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "vrefint":    { "$ref": "#/$defs/calibration_data_point" },
+        "ts_cal_low": { "$ref": "#/$defs/calibration_data_point" },
+        "ts_cal_high":{ "$ref": "#/$defs/calibration_data_point" },
+        "ts_slope_uv_per_c": { "type": "number" }
+      }
+    },
+
+    "calibration_data_point": {
+      "type": "object",
+      "required": ["rom_addr"],
+      "additionalProperties": true,
+      "properties": {
+        "rom_addr":         { "$ref": "#/$defs/hex_or_int" },
+        "size_bits":        { "type": "integer", "enum": [8, 16, 24, 32] },
+        "nominal_mv":       { "type": "number" },
+        "temp_celsius":     { "type": "number" },
+        "vdda_calibration": { "type": "number" },
+        "description":      { "type": "string" }
+      }
+    },
+
+    "pin": {
+      "type": "object",
+      "required": ["signal"],
+      "additionalProperties": true,
+      "properties": {
+        "pin":              { "type": "integer", "minimum": 1 },
+        "pad":              { "type": "integer", "minimum": 1 },
+        "signal":           { "type": "string" },
+        "default_function": { "type": "string" },
+        "ft":               { "type": "boolean" },
+        "rtc":              { "type": "string" },
+        "iomux":            { "type": "string" },
+        "saadc":            { "type": "string" },
+        "adc":              { "type": "string" },
+        "arduino":          { "type": "string" },
+        "pico":             { "type": ["string", "null"] },
+        "voltage":          { "type": "string" },
+        "strapping_role":   { "type": "string" },
+        "input_only":       { "type": "boolean" },
+        "pinned":           { "type": "boolean" },
+        "constraints": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "analog-only", "analog-capable", "analog",
+              "strapping", "flash-reserved",
+              "nfc-default", "lfxo-bond", "input-only",
+              "rtc", "reset", "debug-default", "boot",
+              "oscillator", "power", "power-control",
+              "chip-enable", "module-reserved", "low-drive"
+            ]
+          }
+        }
+      }
+    },
+
+    "interrupts": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/irq_entry" }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "matrix":             { "type": "boolean" },
+            "internal_per_cpu":   { "type": "integer" },
+            "peripheral_sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "name"],
+                "additionalProperties": true,
+                "properties": {
+                  "id":   { "type": "integer" },
+                  "name": { "$ref": "#/$defs/symbol" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

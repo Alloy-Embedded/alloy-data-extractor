@@ -1,0 +1,23 @@
+# Drift class: unit-typed strings without their unit suffix.
+# Expected errors:
+#   * memory[0].size: '65536' does not match the size pattern (no KB/MB/GB)
+#   * clock.oscillators.hsi.freq: '8000000' does not match the freq pattern (no Hz/kHz/MHz)
+
+schema: alloy.device.v2.1
+
+identity:
+  vendor: st
+  family: stm32f1
+  device: stm32f103c8t6
+  core: { isa: armv7-m, name: cortex-m3, bits: 32 }
+
+provenance: { primary: cmsis-svd:STM32F103, authored: hand, authored_on: "2026-05-01" }
+memory:
+  - { id: flash, base: 0x08000000, size: "65536", access: rx }      # missing KB suffix
+clock:
+  oscillators:
+    hsi: { freq: "8000000", kind: rc-internal }                      # missing MHz suffix
+  domains:
+    - { id: sysclk, sources: [hsi], max: "8000000" }                  # same
+peripherals: [{ id: gpioa, template: gpio, base: 0x40010800, bus: apb2 }]
+pinout:      [{ pin: 1, signal: VBAT }]

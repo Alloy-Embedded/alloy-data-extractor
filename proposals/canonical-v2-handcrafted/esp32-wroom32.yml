@@ -1,0 +1,537 @@
+# =============================================================================
+# ESP32 (WROOM-32 module)  —  Xtensa LX6 dual-core @ 240 MHz, 4 MB SPI flash,
+# 520 KB SRAM, WiFi + BT 4.2, 38-pin module
+# =============================================================================
+# Hand-written reference under canonical-v2.  Stresses three things v1 fudged:
+#   • dual-core multicore topology (PRO_CPU + APP_CPU)
+#   • GPIO matrix (any peripheral signal routes to any GPIO via mux)
+#   • externally-mapped flash via XIP cache (no internal flash region)
+
+schema: alloy.device.v2.1
+
+identity:
+  vendor: espressif
+  family: esp32
+  device: esp32
+  variant: wroom-32                  # WROOM-32 is the module that pairs the
+                                     # SoC with 4 MB flash + antenna; same
+                                     # silicon as bare-die ESP32-D0WD.
+  package: qfn-48                    # bare die; module is 38 castellated pads
+  core:
+    isa: xtensa-lx6
+    name: xtensa-lx6
+    fpu: true                         # single-precision FPU on each core
+    mpu: false
+    bits: 32
+    endianness: little
+    interrupt_lines: 32
+    nvic_priority_bits: 0             # priority encoded in interrupt matrix
+    multicore:
+      topology: xtensa_asymmetric_dual_core
+      cores:
+        - { id: cpu0, role: pro_cpu, vector_base: 0x40080000, app_cpu: false }
+        - { id: cpu1, role: app_cpu, vector_base: 0x40078000, app_cpu: true,
+            release_register: DPORT.APPCPU_CTRL_B,
+            release_op: set-bit-0,
+            start_vector_symbol: call_start_cpu1 }
+
+provenance:
+  primary:    espressif-svd:esp32
+  secondary:  [espressif-soc-headers:idf-v5.1, esp32-trm-rev6, esp-idf-soc-caps]
+  authored:   hand
+  authored_on: 2026-05-01
+  notes: >-
+    ESP32 has no traditional clock-enable bits per peripheral — instead the
+    DPORT_PERIP_CLK_EN_REG bit-field gates each IP.  We model that the same
+    way as STM32's RCC_xxxENR for cross-vendor consistency.
+
+# -----------------------------------------------------------------------------
+# Memory map  —  Multiple address spaces, some shared between cores.
+# -----------------------------------------------------------------------------
+memory:
+  # Internal ROM (factory bootloader + ROM functions) — codegen never writes,
+  # but emits linker symbols pointing at it for the IDF compatibility layer.
+  - { id: rom,        base: 0x40000000, size: 384KB, access: rx,
+      address_space: instruction, role: factory-rom }
+  - { id: rom_data,   base: 0x3FF90000, size: 64KB,  access: ro,
+      address_space: data, role: factory-rom-data }
+
+  # External flash mapped via XIP cache (the actual NOR flash chip is on the
+  # WROOM-32 module).  Two cache windows — one each for instruction + data.
+  - { id: flash_irom, base: 0x400D0000, size: 11MB,  access: rx,
+      address_space: instruction, role: xip-instruction,
+      backing: external-spi-flash }
+  - { id: flash_drom, base: 0x3F400000, size: 4MB,   access: ro,
+      address_space: data, role: xip-data,
+      backing: external-spi-flash }
+
+  # On-die SRAM banks.  Total 520 KB but split into IRAM + DRAM (there's also
+  # a tiny RTC SRAM survives deep sleep).
+  - { id: iram,        base: 0x40080000, size: 128KB, access: rwx, alias: code,
+      address_space: instruction, role: ram-instruction }
+  - { id: dram,        base: 0x3FFB0000, size: 320KB, access: rwx, alias: data,
+      address_space: data,        role: ram-data }
+  - { id: rtc_fast,    base: 0x3FF80000, size: 8KB,   access: rwx,
+      address_space: data,        role: rtc-fast,
+      survives: light-sleep }
+  - { id: rtc_slow,    base: 0x50000000, size: 8KB,   access: rwx,
+      address_space: data,        role: rtc-slow,
+      survives: deep-sleep }
+
+  # eFuse — one-time-programmable bits used for MAC, ADC calibration, secure
+  # boot keys.  Codegen never writes; reads via ROM helper.
+  - { id: efuse,       base: 0x3FF5A000, size: 1KB,   access: ro,
+      address_space: data,        role: otp }
+
+# -----------------------------------------------------------------------------
+# Clock tree.  Three groups: CPU clock, APB peripheral clock, RTC slow clock.
+# -----------------------------------------------------------------------------
+clock:
+  oscillators:
+    xtal:        { freq: 40MHz,    kind: crystal-external,   range: [26MHz, 40MHz] }
+    rc_fast:     { freq: 8.5MHz,   kind: rc-internal }       # for boot
+    rc_slow:     { freq: 150kHz,   kind: rc-internal }       # RTC default
+    xtal_32k:    { freq: 32.768kHz, kind: crystal-external,
+                   purpose: rtc-low-power, optional: true }
+
+  pll:
+    pll_main:
+      input_sources: [xtal]
+      outputs:       [320MHz, 480MHz]    # selectable via DPORT_CPU_PER_CONF
+      max_output:    480MHz
+
+  domains:
+    - id: cpu
+      sources:    [xtal, pll_main, rc_fast]
+      prescalers: [1, 2, 3, 4, 6]              # /1 of 480 MHz = max 240 MHz
+      max:        240MHz
+      # Delta 12: SOC_CLK_SEL (DPORT_CPU_PER_CONF.SOC_CLK_SEL)
+      select_register:
+        reg: DPORT.SYSCLK_CONF
+        field: SOC_CLK_SEL
+        encoding: { xtal: 0, pll_main: 1, rc_fast: 2 }
+    - id: apb
+      source:     cpu
+      prescalers: [1]                          # APB derived from CPU
+      max:        80MHz
+    - id: ref_tick
+      source:     apb
+      prescalers: [1]                          # 1 MHz reference tick
+      target_freq: 1MHz
+    - id: rtc_slow
+      sources:    [rc_slow, xtal_32k, xtal/4]
+      max:        150kHz
+      select_register:
+        reg: RTC_CNTL.CLK_CONF
+        field: ANA_CLK_RTC_SEL
+        encoding: { rc_slow: 0, xtal_32k: 1, "xtal/4": 2 }
+    - id: rtc_fast
+      sources:    [xtal/4, rc_fast]
+      max:        17.5MHz
+
+  # Delta 10: named clock profiles.  ESP-IDF defaults to 240-MHz-from-PLL on
+  # ESP32; the boot ROM brings the chip up at "safe-rc-fast-8mhz" first.
+  profiles:
+    - id: safe-rc-fast-8mhz
+      kind: post-reset
+      sysclk: 8.5MHz
+      sysclk_source: rc_fast
+
+    - id: pll-240mhz
+      kind: recommended
+      sysclk: 240MHz
+      sysclk_source: pll_main
+      pll_output: 480MHz
+      cpu_div: 2
+      apb: 80MHz
+
+    - id: pll-160mhz
+      kind: alternative
+      sysclk: 160MHz
+      sysclk_source: pll_main
+      pll_output: 320MHz
+      cpu_div: 2
+      apb: 80MHz
+
+    - id: xtal-direct-40mhz
+      kind: low-power
+      sysclk: 40MHz
+      sysclk_source: xtal
+      apb: 40MHz
+
+  reset_state:
+    cpu_source: rc_fast
+    cpu_freq:   8.5MHz
+    apb_freq:   8.5MHz
+    rtc_slow:   rc_slow
+
+# -----------------------------------------------------------------------------
+# IP-block templates.
+# -----------------------------------------------------------------------------
+templates:
+
+  gpio:
+    pins_per_port: 40                       # ESP32 names pins GPIO0..GPIO39
+    capabilities: [input, output, open-drain, pull-up, pull-down,
+                   gpio-matrix, iomux-fast-path, rtc-gpio]
+    # ESP32's "GPIO matrix" routes ANY peripheral signal to ANY pin.  The
+    # `gpio-matrix` capability flags the model; pin restrictions for input-
+    # only pads + fixed strapping pins are recorded in `pinout` below.
+    speeds_mhz: [40]                        # iomux fast-path; matrix path slower
+    registers:
+      out:     { offset: 0x04, role: output-state }
+      out_w1ts: { offset: 0x08, access: wo, role: set }
+      out_w1tc: { offset: 0x0C, access: wo, role: clear }
+      enable:  { offset: 0x20, role: direction }
+      in:      { offset: 0x3C, access: ro, role: input-state }
+
+  uart:
+    capabilities: [tx, rx, dma, hardware-flow-control, rs485, irda]
+    options:
+      data_bits:    [5, 6, 7, 8]
+      parity:       [none, even, odd]
+      stop_bits:    ["1", "1.5", "2"]
+      mode:         [tx, rx, tx-rx]
+      flow_control: [none, rts, cts, rts-cts]
+      fifo_depth:   128                     # bytes
+    max_baud: 5000000
+    registers:
+      fifo:   { offset: 0x00 }
+      int_st: { offset: 0x04 }
+      conf0:  { offset: 0x20 }
+      conf1:  { offset: 0x24 }
+      clkdiv: { offset: 0x14 }
+    # Opt-in subset (delta 13).  Full register catalogue lives in the
+    # espressif-svd; codegen reads it only for register-dump features.
+    fields:
+      conf0.parity:       { bit: 0,
+                            enum: { even: 0, odd: 1 } }                # delta 2
+      conf0.parity_en:    { bit: 1 }
+      conf0.bit_num:      { bits: [2, 3],
+                            enum: { 5bit: 0, 6bit: 1, 7bit: 2, 8bit: 3 } }
+      conf0.stop_bit_num: { bits: [4, 5],
+                            enum: { 1: 1, "1.5": 2, 2: 3 } }
+      conf0.tx_flow_en:   { bit: 15 }
+      conf0.rxfifo_rst:   { bit: 17 }
+
+  spi:
+    capabilities: [master, slave, full-duplex, half-duplex, dma, qpi, octspi]
+    options:
+      data_size:      [8, 16, 32]            # configurable bit-width
+      baud_prescaler: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+      modes:          [0, 1, 2, 3]
+    max_clock: 40MHz
+    registers:
+      cmd:   { offset: 0x00 }
+      addr:  { offset: 0x04 }
+      ctrl:  { offset: 0x08 }
+      clock: { offset: 0x18 }
+      user:  { offset: 0x1C }
+      user1: { offset: 0x20 }
+      user2: { offset: 0x24 }
+      mosi_dlen: { offset: 0x28 }
+      miso_dlen: { offset: 0x2C }
+      data_buf:  { offset: 0x80 }            # 16× 32-bit FIFO
+
+  i2c:
+    capabilities: [master, slave, smbus, fifo]
+    options:
+      speeds: [100kHz, 400kHz, 1MHz]
+    registers:
+      scl_low_period:  { offset: 0x00 }
+      scl_high_period: { offset: 0x08 }
+      sda_hold:        { offset: 0x30 }
+      ctr:             { offset: 0x04 }
+      sr:              { offset: 0x10 }
+      fifo_data:       { offset: 0x9C }
+
+  ledc:                                       # ESP32-specific PWM peripheral
+    capabilities: [pwm, fade, hardware-fade, dma]
+    options:
+      resolution_bits: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+      timer_count:     4
+      channel_count:   16                     # 8 high-speed + 8 low-speed
+      clock_sources:   [apb, ref_tick, rtc_slow]
+
+  timer_group:
+    capabilities: [up, down, alarm, pwm-capture, watchdog-mode, dma]
+    counter_bits: 64
+    timers_per_group: 2
+
+  rmt:                                         # ESP32-specific remote control
+    capabilities: [tx, rx, ir-protocol-encoding, dma, loop]
+    options:
+      memory_blocks: 8                        # 64-symbol blocks shareable
+      max_clock: 80MHz
+
+  adc:
+    capabilities: [single, continuous, dma, calibration]
+    options:
+      resolution: [9, 10, 11, 12]
+      attenuation: ["0dB", "2.5dB", "6dB", "11dB"]
+    max_clock: 20MHz
+    notes: ADC2 conflicts with WiFi; codegen issues a warning when both used.
+
+# -----------------------------------------------------------------------------
+# Peripheral instances.  ESP32's clock-enable bits live in the DPORT block;
+# we name them exactly like STM32's RCC entries for code reuse.
+# -----------------------------------------------------------------------------
+peripherals:
+
+  # --- Single GPIO controller — pins live in `pinout` below.
+  - id: gpio
+    template: gpio
+    base: 0x3FF44000
+    bus:  apb
+    rcc:  { en: DPORT.PERIP_CLK_EN.GPIO, rst: DPORT.PERIP_RST_EN.GPIO }
+
+  # --- UART (3 instances — UART0 default for boot console)
+  - id: uart0
+    template: uart
+    base: 0x3FF40000
+    bus:  apb
+    clock_source: apb
+    irq:  { num: 34, name: UART0_INTR_SOURCE }
+    rcc:  { en: DPORT.PERIP_CLK_EN.UART0, rst: DPORT.PERIP_RST_EN.UART0 }
+    dma:
+      shared: gdma                              # ESP32 has no GDMA — leave for s2/s3
+    pin_options:                                # via GPIO matrix; any GPIO works.
+      tx: { matrix: true, default: GPIO1, fast_path: GPIO1 }    # IO_MUX U0TXD
+      rx: { matrix: true, default: GPIO3, fast_path: GPIO3 }
+      cts: { matrix: true }
+      rts: { matrix: true }
+
+  - id: uart1
+    template: uart
+    base: 0x3FF50000
+    bus:  apb
+    clock_source: apb
+    irq:  { num: 35, name: UART1_INTR_SOURCE }
+    rcc:  { en: DPORT.PERIP_CLK_EN.UART1, rst: DPORT.PERIP_RST_EN.UART1 }
+    pin_options:
+      tx: { matrix: true, default: GPIO10, fast_path: GPIO10 }
+      rx: { matrix: true, default: GPIO9,  fast_path: GPIO9 }
+
+  - id: uart2
+    template: uart
+    base: 0x3FF6E000
+    bus:  apb
+    clock_source: apb
+    irq:  { num: 36, name: UART2_INTR_SOURCE }
+    rcc:  { en: DPORT.PERIP_CLK_EN.UART2, rst: DPORT.PERIP_RST_EN.UART2 }
+    pin_options:
+      tx: { matrix: true, default: GPIO17, fast_path: GPIO17 }
+      rx: { matrix: true, default: GPIO16, fast_path: GPIO16 }
+
+  # --- SPI (4 instances; SPI0 + SPI1 are flash/PSRAM only — codegen treats
+  #     SPI2 (HSPI) and SPI3 (VSPI) as user-accessible).
+  - id: spi2
+    template: spi
+    base: 0x3FF64000
+    bus:  apb
+    alias: hspi
+    clock_source: apb
+    irq:  { num: 28, name: SPI2_INTR_SOURCE }
+    rcc:  { en: DPORT.PERIP_CLK_EN.SPI2, rst: DPORT.PERIP_RST_EN.SPI2 }
+    pin_options:
+      sck:  { matrix: true, fast_path: GPIO14 }
+      miso: { matrix: true, fast_path: GPIO12 }
+      mosi: { matrix: true, fast_path: GPIO13 }
+      cs:   { matrix: true, fast_path: GPIO15 }
+
+  - id: spi3
+    template: spi
+    base: 0x3FF65000
+    bus:  apb
+    alias: vspi
+    clock_source: apb
+    irq:  { num: 29, name: SPI3_INTR_SOURCE }
+    rcc:  { en: DPORT.PERIP_CLK_EN.SPI3, rst: DPORT.PERIP_RST_EN.SPI3 }
+    pin_options:
+      sck:  { matrix: true, fast_path: GPIO18 }
+      miso: { matrix: true, fast_path: GPIO19 }
+      mosi: { matrix: true, fast_path: GPIO23 }
+      cs:   { matrix: true, fast_path: GPIO5 }
+
+  # --- I²C
+  - id: i2c0
+    template: i2c
+    base: 0x3FF53000
+    bus:  apb
+    clock_source: apb
+    irq:  { num: 49, name: I2C_EXT0_INTR_SOURCE }
+    rcc:  { en: DPORT.PERIP_CLK_EN.I2C_EXT0, rst: DPORT.PERIP_RST_EN.I2C_EXT0 }
+    pin_options:
+      scl: { matrix: true }
+      sda: { matrix: true }
+
+  - id: i2c1
+    template: i2c
+    base: 0x3FF67000
+    bus:  apb
+    clock_source: apb
+    irq:  { num: 50, name: I2C_EXT1_INTR_SOURCE }
+    rcc:  { en: DPORT.PERIP_CLK_EN.I2C_EXT1, rst: DPORT.PERIP_RST_EN.I2C_EXT1 }
+    pin_options:
+      scl: { matrix: true }
+      sda: { matrix: true }
+
+  # --- LEDC (PWM)
+  - id: ledc
+    template: ledc
+    base: 0x3FF59000
+    bus:  apb
+    clock_source: apb
+    irq:  { num: 43, name: LEDC_INTR_SOURCE }
+    rcc:  { en: DPORT.PERIP_CLK_EN.LEDC, rst: DPORT.PERIP_RST_EN.LEDC }
+    pin_options:
+      ch0..ch15: { matrix: true }              # any of 16 channels → any GPIO
+
+  # --- Timer groups (each has 2 timers, plus a watchdog)
+  - id: timg0
+    template: timer_group
+    base: 0x3FF5F000
+    bus:  apb
+    clock_source: apb
+    irq:  [{ num: 14, name: TG0_T0_LEVEL_INTR_SOURCE },
+           { num: 15, name: TG0_T1_LEVEL_INTR_SOURCE }]
+    rcc:  { en: DPORT.PERIP_CLK_EN.TIMERGROUP, rst: DPORT.PERIP_RST_EN.TIMERGROUP }
+
+  - id: timg1
+    template: timer_group
+    base: 0x3FF60000
+    bus:  apb
+    clock_source: apb
+    irq:  [{ num: 16, name: TG1_T0_LEVEL_INTR_SOURCE },
+           { num: 17, name: TG1_T1_LEVEL_INTR_SOURCE }]
+    rcc:  { en: DPORT.PERIP_CLK_EN.TIMERGROUP1, rst: DPORT.PERIP_RST_EN.TIMERGROUP1 }
+
+  # --- ADC (2 units; ADC2 conflicts with WiFi)
+  - id: adc1
+    template: adc
+    base: 0x3FF48800
+    bus:  apb
+    clock_source: apb
+    rcc:  { en: DPORT.PERIP_CLK_EN.SARADC }
+    channels:
+      ch0: GPIO36
+      ch3: GPIO39
+      ch4: GPIO32
+      ch5: GPIO33
+      ch6: GPIO34
+      ch7: GPIO35
+    notes: 8 channels total but only those ADC1-capable on QFN-48 listed.
+
+  - id: adc2
+    template: adc
+    base: 0x3FF48800
+    bus:  apb
+    clock_source: apb
+    rcc:  { en: DPORT.PERIP_CLK_EN.SARADC }
+    conflicts_with: [wifi]
+    channels:
+      ch0: GPIO4
+      ch1: GPIO0
+      ch2: GPIO2
+      ch3: GPIO15
+      ch4: GPIO13
+      ch5: GPIO12
+      ch6: GPIO14
+      ch7: GPIO27
+      ch8: GPIO25
+      ch9: GPIO26
+
+# -----------------------------------------------------------------------------
+# Pin map  —  WROOM-32 module castellation (38 pads).
+#
+# constraints (delta 1):
+#   * input-only      — pad has no output buffer (GPIO34..39)
+#   * strapping       — sampled at reset; affects boot flow if mis-driven
+#   * flash-reserved  — tied to module SPI flash; codegen rejects user use
+#   * power           — VDD33 / GND
+#   * chip-enable     — EN pin (active-high)
+#   * rtc             — pad is an RTC GPIO (survives deep sleep)
+# -----------------------------------------------------------------------------
+pinout:
+  - { pin:  1, signal: GND,                                        constraints: [power] }
+  - { pin:  2, signal: VDD33,                                      constraints: [power] }
+  - { pin:  3, signal: EN,                                         constraints: [chip-enable] }
+  - { pin:  4, signal: GPIO36,    rtc: ch0,                        constraints: [input-only, rtc] }
+  - { pin:  5, signal: GPIO39,    rtc: ch3,                        constraints: [input-only, rtc] }
+  - { pin:  6, signal: GPIO34,    rtc: ch6,                        constraints: [input-only, rtc] }
+  - { pin:  7, signal: GPIO35,    rtc: ch7,                        constraints: [input-only, rtc] }
+  - { pin:  8, signal: GPIO32,    rtc: ch4,                        constraints: [rtc] }
+  - { pin:  9, signal: GPIO33,    rtc: ch5,                        constraints: [rtc] }
+  - { pin: 10, signal: GPIO25 }
+  - { pin: 11, signal: GPIO26 }
+  - { pin: 12, signal: GPIO27 }
+  - { pin: 13, signal: GPIO14,    iomux: hspi-sck }
+  - { pin: 14, signal: GPIO12,    iomux: hspi-miso,                constraints: [strapping],  strapping_role: bootmode-mtdi }
+  - { pin: 15, signal: GND,                                        constraints: [power] }
+  - { pin: 16, signal: GPIO13,    iomux: hspi-mosi }
+  - { pin: 17, signal: GPIO9,                                      constraints: [flash-reserved] }   # flash D2
+  - { pin: 18, signal: GPIO10,                                     constraints: [flash-reserved] }   # flash D3
+  - { pin: 19, signal: GPIO11,                                     constraints: [flash-reserved] }   # flash CMD
+  - { pin: 20, signal: VDD33,                                      constraints: [power] }
+  - { pin: 21, signal: GPIO6,                                      constraints: [flash-reserved] }   # flash CLK
+  - { pin: 22, signal: GPIO7,                                      constraints: [flash-reserved] }   # flash D0
+  - { pin: 23, signal: GPIO8,                                      constraints: [flash-reserved] }   # flash D1
+  - { pin: 24, signal: GPIO15,    iomux: hspi-cs0,                 constraints: [strapping],  strapping_role: console-debug-en }
+  - { pin: 25, signal: GPIO2,                                      constraints: [strapping],  strapping_role: bootmode-and-led }
+  - { pin: 26, signal: GPIO0,                                      constraints: [strapping],  strapping_role: bootmode }
+  - { pin: 27, signal: GPIO4 }
+  - { pin: 28, signal: GPIO16 }
+  - { pin: 29, signal: GPIO17 }
+  - { pin: 30, signal: GPIO5,                                      constraints: [strapping],  strapping_role: vdd-sdio-voltage }
+  - { pin: 31, signal: GPIO18 }
+  - { pin: 32, signal: GPIO19 }
+  - { pin: 33, signal: GND,                                        constraints: [power] }
+  - { pin: 34, signal: GPIO21 }
+  - { pin: 35, signal: GPIO3,     iomux: u0rxd,                    default_function: uart0-rx }
+  - { pin: 36, signal: GPIO1,     iomux: u0txd,                    default_function: uart0-tx }
+  - { pin: 37, signal: GPIO22 }
+  - { pin: 38, signal: GPIO23 }
+
+# -----------------------------------------------------------------------------
+# Vector table.  ESP32 has 32 internal interrupts per CPU plus a peripheral
+# interrupt matrix that routes any of ~70 peripheral signals to any
+# internal slot.
+# -----------------------------------------------------------------------------
+interrupts:
+  matrix: true                                  # signals to slot is dynamic
+  internal_per_cpu: 32
+  peripheral_sources:
+    - { id: 14, name: TG0_T0_LEVEL_INTR_SOURCE }
+    - { id: 16, name: TG1_T0_LEVEL_INTR_SOURCE }
+    - { id: 28, name: SPI2_INTR_SOURCE }
+    - { id: 29, name: SPI3_INTR_SOURCE }
+    - { id: 34, name: UART0_INTR_SOURCE }
+    - { id: 35, name: UART1_INTR_SOURCE }
+    - { id: 36, name: UART2_INTR_SOURCE }
+    - { id: 43, name: LEDC_INTR_SOURCE }
+    - { id: 49, name: I2C_EXT0_INTR_SOURCE }
+    - { id: 50, name: I2C_EXT1_INTR_SOURCE }
+    # … (truncated for brevity; full table lives in the SVD)
+
+# -----------------------------------------------------------------------------
+# Golden config snippets.
+# -----------------------------------------------------------------------------
+system_examples:
+  blink_gpio2:
+    description: "Blink the on-module LED on GPIO2 at 1 Hz."
+    clock: { cpu: 240MHz, source: pll_main, pll_output: 480MHz, pll_div: 2,
+             apb: 80MHz, xtal: 40MHz }
+    gpio:  { instance: gpio, pin: 2, mode: output }
+
+  uart0_115200:
+    clock: { cpu: 240MHz, source: pll_main, pll_output: 480MHz, pll_div: 2 }
+    pinmux:
+      - { pin: GPIO1, function: uart0_tx }
+      - { pin: GPIO3, function: uart0_rx }
+    uart:
+      instance: uart0
+      baud: 115200
+      data_bits: 8
+      parity: none
+      stop_bits: "1"
+      mode: tx-rx
