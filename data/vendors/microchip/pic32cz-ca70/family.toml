@@ -1,0 +1,161 @@
+# PIC32CZ-CA70 family overlay — auto-scaffolded by
+# scripts/scaffold_family_overlay.py from PIC32CZ2051CA70144.atdf.
+#
+# Core (per ATDF <device architecture>): Cortex-M7F
+# CHIP_FREQ_CPU_MAX:                     300_000_000 Hz
+#
+# Refine peripheral max clocks from the family datasheet
+# when you need silicon-accurate ceilings — these are
+# conservative defaults derived from CPU_MAX.
+
+# ---------------------------------------------------------------------------
+# ADC / UART / SPI / I²C max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+max_clock_hz = 16_000_000  # 16 MHz
+
+[uart]
+max_baud_hz = 37_500_000  # 37500 kHz
+
+[spi]
+max_clock_hz = 150_000_000  # 150 MHz
+
+[i2c]
+max_clock_hz = 1_000_000  # 1 MHz (Fast-Mode-Plus, supported by every modern Atmel SERCOM/TWIHS)
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (auto-populated from ATDF <address-space><memory-segment>)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "PERIPHERALS"
+kind = "io"
+base_address = 0x40000000
+size_bytes = 536870912  # 512 MB
+access = "rw"
+
+[[memories]]
+name = "SYSTEM"
+kind = "io"
+base_address = 0xE0000000
+size_bytes = 268435456  # 256 MB
+access = "rw"
+
+[[memories]]
+name = "QSPIMEM"
+kind = "external"
+base_address = 0x80000000
+size_bytes = 536870912  # 512 MB
+access = "rwx"
+role = "xip"
+
+[[memories]]
+name = "AXIMX"
+kind = "external"
+base_address = 0xA0000000
+size_bytes = 1048576  # 1 MB
+access = "rw"
+
+[[memories]]
+name = "ITCM"
+kind = "sram"
+base_address = 0x00000000
+size_bytes = 131072  # 128 KB
+access = "rwx"
+role = "tcm"
+
+[[memories]]
+name = "IFLASH"
+kind = "flash"
+base_address = 0x00400000
+size_bytes = 2097152  # 2 MB
+access = "rwx"
+address_space = "code"
+
+[[memories]]
+name = "IROM"
+kind = "rom"
+base_address = 0x00800000
+size_bytes = 16384  # 16 KB
+access = "rx"
+role = "boot-rom"
+
+[[memories]]
+name = "DTCM"
+kind = "sram"
+base_address = 0x20000000
+size_bytes = 131072  # 128 KB
+access = "rwx"
+role = "tcm"
+
+[[memories]]
+name = "IRAM"
+kind = "sram"
+base_address = 0x20400000
+size_bytes = 524288  # 512 KB
+access = "rwx"
+address_space = "data"
+
+[[memories]]
+name = "EBI_CS0"
+kind = "external"
+base_address = 0x60000000
+size_bytes = 16777216  # 16 MB
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS1"
+kind = "external"
+base_address = 0x61000000
+size_bytes = 16777216  # 16 MB
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS2"
+kind = "external"
+base_address = 0x62000000
+size_bytes = 16777216  # 16 MB
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS3"
+kind = "external"
+base_address = 0x63000000
+size_bytes = 16777216  # 16 MB
+access = "rwx"
+role = "external-bus"
+
+# ---------------------------------------------------------------------------
+# System clock — minimal post-reset + max profile.
+# Refine with PLL params + named oscillators per family datasheet.
+# ---------------------------------------------------------------------------
+
+[system_clock.post_reset_profile]
+name = "factory-default"
+sysclk_hz = 4_000_000  # 4 MHz
+hclk_hz = 4_000_000  # 4 MHz
+pclk_hz = 4_000_000  # 4 MHz
+source = "internal-rc"
+
+[[system_clock.recommended_profiles]]
+name = "cortexm7f-max"
+sysclk_hz = 300_000_000  # 300 MHz
+hclk_hz = 300_000_000  # 300 MHz
+pclk_hz = 150_000_000  # 150 MHz
+source = "pll"

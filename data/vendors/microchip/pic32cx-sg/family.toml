@@ -1,0 +1,126 @@
+# PIC32CX-SG family overlay — auto-scaffolded by
+# scripts/scaffold_family_overlay.py from PIC32CX0525SG12144.atdf.
+#
+# Core (per ATDF <device architecture>): Cortex-M4F
+# CHIP_FREQ_CPU_MAX:                     48_000_000 Hz
+#
+# Refine peripheral max clocks from the family datasheet
+# when you need silicon-accurate ceilings — these are
+# conservative defaults derived from CPU_MAX.
+
+# ---------------------------------------------------------------------------
+# ADC / UART / SPI / I²C max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+max_clock_hz = 16_000_000  # 16 MHz
+
+[uart]
+max_baud_hz = 6_000_000  # 6 MHz
+
+[spi]
+max_clock_hz = 24_000_000  # 24 MHz
+
+[i2c]
+max_clock_hz = 1_000_000  # 1 MHz (Fast-Mode-Plus, supported by every modern Atmel SERCOM/TWIHS)
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (auto-populated from ATDF <address-space><memory-segment>)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "CODE_SRAM"
+kind = "sram"
+base_address = 0x000E0000
+size_bytes = 229376  # 224 KB
+access = "rwx"
+
+[[memories]]
+name = "DATA_SRAM"
+kind = "sram"
+base_address = 0x00118000
+size_bytes = 32768  # 32 KB
+access = "rw"
+
+[[memories]]
+name = "DATA_SRAM_ALIAS"
+kind = "sram"
+base_address = 0x20000000
+size_bytes = 32768  # 32 KB
+access = "rw"
+address_space = "data"
+
+[[memories]]
+name = "EC_DEVICE_REGISTERS"
+kind = "io"
+base_address = 0x40000000
+size_bytes = 524288  # 512 KB
+access = "rw"
+
+[[memories]]
+name = "GPIO_REGISTERS"
+kind = "io"
+base_address = 0x40080000
+size_bytes = 65536  # 64 KB
+access = "rw"
+
+[[memories]]
+name = "HOST_DEVICE_REGISTERS"
+kind = "io"
+base_address = 0x400F0000
+size_bytes = 1048576  # 1 MB
+access = "rw"
+
+[[memories]]
+name = "CRYPTO_RAM"
+kind = "sram"
+base_address = 0x40100000
+size_bytes = 24576  # 24 KB
+access = "ro"
+address_space = "data"
+
+[[memories]]
+name = "SCS"
+kind = "io"
+base_address = 0xE000E000
+size_bytes = 4096  # 4 KB
+access = "rw"
+
+[[memories]]
+name = "EXTERNAL_FLASH"
+kind = "flash"
+base_address = 0x50000000
+size_bytes = 134217728  # 128 MB
+access = "rwx"
+address_space = "code"
+
+# ---------------------------------------------------------------------------
+# System clock — minimal post-reset + max profile.
+# Refine with PLL params + named oscillators per family datasheet.
+# ---------------------------------------------------------------------------
+
+[system_clock.post_reset_profile]
+name = "factory-default"
+sysclk_hz = 4_000_000  # 4 MHz
+hclk_hz = 4_000_000  # 4 MHz
+pclk_hz = 4_000_000  # 4 MHz
+source = "internal-rc"
+
+[[system_clock.recommended_profiles]]
+name = "cortexm4f-max"
+sysclk_hz = 48_000_000  # 48 MHz
+hclk_hz = 48_000_000  # 48 MHz
+pclk_hz = 48_000_000  # 48 MHz
+source = "pll"

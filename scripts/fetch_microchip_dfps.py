@@ -56,7 +56,12 @@ DEFAULT_FAMILIES = (
 
 _VERSION_RX = re.compile(r"\.(\d+)\.(\d+)\.(\d+)\.atpack$")
 _PACK_RX = re.compile(
-    r'Microchip\.(?P<fam>[A-Z0-9]+)_DFP\.(?P<ver>\d+\.\d+\.\d+)\.atpack',
+    # Family names allow:
+    #   * Hyphens — PIC32CM-JH, PIC32CK-GC, PIC32CX-BZ3, PIC32CZ-CA70
+    #   * Mixed case — ATmega, ATtiny, ATautomotive
+    #   * Digits — PIC16F1xxxx, PIC18Fxxxx
+    #   * Lowercase prefix — dsPIC30F, dsPIC33CK-MP
+    r'Microchip\.(?P<fam>[A-Za-z][A-Za-z0-9_-]+?)_DFP\.(?P<ver>\d+\.\d+\.\d+)\.atpack',
 )
 
 

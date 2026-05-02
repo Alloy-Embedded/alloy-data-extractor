@@ -1,0 +1,125 @@
+# ATAUTOMOTIVE family overlay — auto-scaffolded by
+# scripts/scaffold_family_overlay.py from ATA5702M322.atdf.
+#
+# Core (per ATDF <device architecture>): Avr8
+# CHIP_FREQ_CPU_MAX:                     48_000_000 Hz
+#
+# Refine peripheral max clocks from the family datasheet
+# when you need silicon-accurate ceilings — these are
+# conservative defaults derived from CPU_MAX.
+
+# ---------------------------------------------------------------------------
+# ADC / UART / SPI / I²C max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+max_clock_hz = 16_000_000  # 16 MHz
+
+[uart]
+max_baud_hz = 6_000_000  # 6 MHz
+
+[spi]
+max_clock_hz = 24_000_000  # 24 MHz
+
+[i2c]
+max_clock_hz = 1_000_000  # 1 MHz (Fast-Mode-Plus, supported by every modern Atmel SERCOM/TWIHS)
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (auto-populated from ATDF <address-space><memory-segment>)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "ROM"
+kind = "flash"
+base_address = 0x00000000
+size_bytes = 32768  # 32 KB
+access = "rx"
+address_space = "code"
+
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0x00008000
+size_bytes = 32768  # 32 KB
+access = "rwx"
+address_space = "code"
+
+[[memories]]
+name = "SIGNATURES"
+kind = "external"
+base_address = 0x00000000
+size_bytes = 3
+access = "ro"
+
+[[memories]]
+name = "FUSES"
+kind = "external"
+base_address = 0x00000000
+size_bytes = 1
+access = "rw"
+
+[[memories]]
+name = "LOCKBITS"
+kind = "external"
+base_address = 0x00000000
+size_bytes = 1
+access = "rw"
+
+[[memories]]
+name = "REGISTERS"
+kind = "external"
+base_address = 0x00000000
+size_bytes = 32
+access = "ro"
+
+[[memories]]
+name = "MAPPED_IO"
+kind = "io"
+base_address = 0x00000020
+size_bytes = 480
+access = "ro"
+
+[[memories]]
+name = "IRAM"
+kind = "sram"
+base_address = 0x00000200
+size_bytes = 1024  # 1 KB
+access = "ro"
+
+[[memories]]
+name = "EEPROM"
+kind = "eeprom"
+base_address = 0x00000000
+size_bytes = 2176
+access = "rw"
+
+# ---------------------------------------------------------------------------
+# System clock — minimal post-reset + max profile.
+# Refine with PLL params + named oscillators per family datasheet.
+# ---------------------------------------------------------------------------
+
+[system_clock.post_reset_profile]
+name = "factory-default"
+sysclk_hz = 1_000_000  # 1 MHz
+hclk_hz = 1_000_000  # 1 MHz
+pclk_hz = 1_000_000  # 1 MHz
+source = "internal-rc"
+
+[[system_clock.recommended_profiles]]
+name = "avr8-max"
+sysclk_hz = 48_000_000  # 48 MHz
+hclk_hz = 48_000_000  # 48 MHz
+pclk_hz = 48_000_000  # 48 MHz
+source = "pll"

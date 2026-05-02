@@ -41,13 +41,18 @@ from alloy_data_extractor.extractors.microchip_csp_v2_1 import (  # noqa: E402
 from alloy_data_extractor.extractors.microchip_overlay_v2_1 import (  # noqa: E402
     extract_device as overlay_extract,
 )
+from alloy_data_extractor.extractors.microchip_pic_v2_1 import (  # noqa: E402
+    extract_device as pic_extract,
+)
 from alloy_data_extractor.merge_v2_1 import (  # noqa: E402
     MICROCHIP_MERGE_POLICY,
     merge_payloads,
 )
 
 
-_FAMILY_DIR_RX = re.compile(r"^(?P<family>[a-z][a-z0-9]+)-[0-9a-f]{16}$")
+# Family dir slug pattern.  Hyphens are legal — PIC32 packs ship
+# as `pic32cm-jh-<sha>`, `pic32cz-ca80-<sha>`, etc.
+_FAMILY_DIR_RX = re.compile(r"^(?P<family>[a-z][a-z0-9-]+)-[0-9a-f]{16}$")
 
 
 def _discover_atdfs(dfp_cache: Path) -> dict[str, list[Path]]:
@@ -68,6 +73,29 @@ def _discover_atdfs(dfp_cache: Path) -> dict[str, list[Path]]:
     return out
 
 
+def _discover_pic_edc(dfp_cache: Path) -> dict[str, list[Path]]:
+    """Return ``{family_slug: [pic_path, ...]}`` for every 8/16-bit
+    PIC chip present under ``<dfp_cache>/<family>-<sha>/edc/*.PIC``.
+
+    PIC packs (PIC18Fxxxx, PIC16F1xxxx, …) ship the proprietary
+    EDC schema instead of ATDF; they live in ``<pack>/edc/<chip>.PIC``.
+    """
+    out: dict[str, list[Path]] = defaultdict(list)
+    for child in sorted(dfp_cache.iterdir()):
+        if not child.is_dir():
+            continue
+        m = _FAMILY_DIR_RX.match(child.name)
+        if not m:
+            continue
+        fam = m.group("family")
+        edc_dir = child / "edc"
+        if not edc_dir.is_dir():
+            continue
+        for pic in edc_dir.glob("*.PIC"):
+            out[fam].append(pic)
+    return out
+
+
 def _re_emit_one(
     *,
     atdf_path: Path,
@@ -77,10 +105,17 @@ def _re_emit_one(
     output_root: Path,
 ) -> tuple[Path, list[str]]:
     device = atdf_path.stem.lower()
-    primary = atdf_extract(
-        vendor="microchip", family=family, device=device, atdf_path=atdf_path,
-    )
-    sources = ["microchip-atdf"]
+    is_pic_edc = atdf_path.suffix.upper() == ".PIC"
+    if is_pic_edc:
+        primary = pic_extract(
+            vendor="microchip", family=family, device=device, pic_path=atdf_path,
+        )
+        sources = ["microchip-pic"]
+    else:
+        primary = atdf_extract(
+            vendor="microchip", family=family, device=device, atdf_path=atdf_path,
+        )
+        sources = ["microchip-atdf"]
     enrichments = []
 
     family_toml = overlay_root / "vendors" / "microchip" / family / "family.toml"
@@ -91,7 +126,9 @@ def _re_emit_one(
         ))
         sources.append("microchip-overlay")
 
-    if csp_root is not None and csp_root.is_dir():
+    # CSP only applies to ARM/AVR ATDF families — PIC8 EDC has
+    # no Harmony clock pack.
+    if not is_pic_edc and csp_root is not None and csp_root.is_dir():
         csp_payload = csp_extract(
             vendor="microchip", family=family, device=device,
             csp_root=csp_root, atdf_path=atdf_path,
@@ -125,6 +162,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     discovered = _discover_atdfs(args.dfp_cache)
+    # Fold in PIC EDC (.PIC) families — these don't ship ATDFs.
+    for fam, files in _discover_pic_edc(args.dfp_cache).items():
+        if fam not in discovered:
+            discovered[fam] = files
+        else:
+            # Same family had both ATDF and EDC — keep ATDF priority.
+            pass
     if not discovered:
         print(f"ERROR: no DFP family directories found under {args.dfp_cache}",
               file=sys.stderr)

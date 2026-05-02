@@ -1,0 +1,116 @@
+# PIC32MX family overlay — auto-scaffolded by
+# scripts/scaffold_family_overlay.py from PIC32MX250F128B.atdf.
+#
+# Core (per ATDF <device architecture>): Mips
+# CHIP_FREQ_CPU_MAX:                     48_000_000 Hz
+#
+# Refine peripheral max clocks from the family datasheet
+# when you need silicon-accurate ceilings — these are
+# conservative defaults derived from CPU_MAX.
+
+# ---------------------------------------------------------------------------
+# ADC / UART / SPI / I²C max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+max_clock_hz = 16_000_000  # 16 MHz
+
+[uart]
+max_baud_hz = 6_000_000  # 6 MHz
+
+[spi]
+max_clock_hz = 24_000_000  # 24 MHz
+
+[i2c]
+max_clock_hz = 1_000_000  # 1 MHz (Fast-Mode-Plus, supported by every modern Atmel SERCOM/TWIHS)
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (auto-populated from ATDF <address-space><memory-segment>)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "emulation"
+kind = "external"
+base_address = 0xFF300000
+size_bytes = 1048576  # 1 MB
+access = "ro"
+
+[[memories]]
+name = "devid"
+kind = "external"
+base_address = 0xFFFFFFFF
+size_bytes = 0
+access = "ro"
+
+[[memories]]
+name = "code"
+kind = "external"
+base_address = 0x1D000000
+size_bytes = 131072  # 128 KB
+access = "ro"
+
+[[memories]]
+name = "bootconfig"
+kind = "external"
+base_address = 0x1FC00000
+size_bytes = 3056
+access = "ro"
+
+[[memories]]
+name = "kseg1_data_mem"
+kind = "external"
+base_address = 0x00000000
+size_bytes = 32768  # 32 KB
+access = "ro"
+
+[[memories]]
+name = "periph0"
+kind = "external"
+base_address = 0x1F800000
+size_bytes = 41984  # 41 KB
+access = "ro"
+
+[[memories]]
+name = "periph1"
+kind = "external"
+base_address = 0x1F80F000
+size_bytes = 3072  # 3 KB
+access = "ro"
+
+[[memories]]
+name = "periph2"
+kind = "external"
+base_address = 0x1F880000
+size_bytes = 28672  # 28 KB
+access = "ro"
+
+# ---------------------------------------------------------------------------
+# System clock — minimal post-reset + max profile.
+# Refine with PLL params + named oscillators per family datasheet.
+# ---------------------------------------------------------------------------
+
+[system_clock.post_reset_profile]
+name = "factory-default"
+sysclk_hz = 1_000_000  # 1 MHz
+hclk_hz = 1_000_000  # 1 MHz
+pclk_hz = 1_000_000  # 1 MHz
+source = "internal-rc"
+
+[[system_clock.recommended_profiles]]
+name = "mips-max"
+sysclk_hz = 48_000_000  # 48 MHz
+hclk_hz = 48_000_000  # 48 MHz
+pclk_hz = 48_000_000  # 48 MHz
+source = "pll"

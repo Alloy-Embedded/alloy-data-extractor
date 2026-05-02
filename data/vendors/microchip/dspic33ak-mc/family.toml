@@ -1,0 +1,25 @@
+# Auto-generated stub overlay for the .PIC (EDC schema) line.
+# Memory map + peripherals + pinout are extracted from the .PIC
+# file directly; this overlay only adds the I²C speed catalogue
+# and conservative peripheral max clocks.
+
+[adc]
+max_clock_hz = 10_000_000
+
+[uart]
+max_baud_hz = 5_000_000
+
+[i2c]
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000

@@ -1,0 +1,184 @@
+# PIC32CX-BZ3 family overlay — auto-scaffolded by
+# scripts/scaffold_family_overlay.py from PIC32CX5109BZ31032_SL3.atdf.
+#
+# Core (per ATDF <device architecture>): Cortex-M4F
+# CHIP_FREQ_CPU_MAX:                     48_000_000 Hz
+#
+# Refine peripheral max clocks from the family datasheet
+# when you need silicon-accurate ceilings — these are
+# conservative defaults derived from CPU_MAX.
+
+# ---------------------------------------------------------------------------
+# ADC / UART / SPI / I²C max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+max_clock_hz = 16_000_000  # 16 MHz
+
+[uart]
+max_baud_hz = 6_000_000  # 6 MHz
+
+[spi]
+max_clock_hz = 24_000_000  # 24 MHz
+
+[i2c]
+max_clock_hz = 1_000_000  # 1 MHz (Fast-Mode-Plus, supported by every modern Atmel SERCOM/TWIHS)
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (auto-populated from ATDF <address-space><memory-segment>)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "ROM_SECURE_BOOT_ROM"
+kind = "rom"
+base_address = 0x00000000
+size_bytes = 65536  # 64 KB
+access = "rx"
+
+[[memories]]
+name = "ROM_SECURE_BOOT_PATCH"
+kind = "rom"
+base_address = 0x00018000
+size_bytes = 2048  # 2 KB
+access = "rx"
+
+[[memories]]
+name = "FCR_PFM"
+kind = "flash"
+base_address = 0x01000000
+size_bytes = 524288  # 512 KB
+access = "rwx"
+address_space = "code"
+
+[[memories]]
+name = "FCR_BFM"
+kind = "flash"
+base_address = 0x00800000
+size_bytes = 20480  # 20 KB
+access = "rwx"
+address_space = "code"
+
+[[memories]]
+name = "FCR_CFM"
+kind = "external"
+base_address = 0x00805000
+size_bytes = 4096  # 4 KB
+access = "rw"
+
+[[memories]]
+name = "FCR_OTP_PAGE"
+kind = "flash"
+base_address = 0x00806000
+size_bytes = 4096  # 4 KB
+access = "rwx"
+address_space = "code"
+
+[[memories]]
+name = "CMCC_TCM"
+kind = "external"
+base_address = 0x02000000
+size_bytes = 4096  # 4 KB
+access = "rw"
+
+[[memories]]
+name = "RAM_SYSTEM_RAM"
+kind = "sram"
+base_address = 0x20000000
+size_bytes = 98304  # 96 KB
+access = "rwx"
+address_space = "data"
+
+[[memories]]
+name = "QSPI"
+kind = "external"
+base_address = 0x04000000
+size_bytes = 16777216  # 16 MB
+access = "rwx"
+role = "xip"
+
+[[memories]]
+name = "PBA_BRIDGE"
+kind = "io"
+base_address = 0x40000000
+size_bytes = 16384  # 16 KB
+access = "rw"
+
+[[memories]]
+name = "PBB_BRIDGE"
+kind = "io"
+base_address = 0x41000000
+size_bytes = 94208  # 92 KB
+access = "rw"
+
+[[memories]]
+name = "PBC_BRIDGE"
+kind = "io"
+base_address = 0x42000000
+size_bytes = 73728  # 72 KB
+access = "rw"
+
+[[memories]]
+name = "SILEX_SFR"
+kind = "io"
+base_address = 0x43000000
+size_bytes = 131072  # 128 KB
+access = "rw"
+
+[[memories]]
+name = "PBPIC_BRIDGE"
+kind = "io"
+base_address = 0x44000000
+size_bytes = 81920  # 80 KB
+access = "rw"
+
+[[memories]]
+name = "MCROM_ROM"
+kind = "rom"
+base_address = 0x45000000
+size_bytes = 8192  # 8 KB
+access = "rx"
+
+[[memories]]
+name = "SYSTEM_CM4F_SYSTEM_REGISTERS"
+kind = "io"
+base_address = 0xE0000000
+size_bytes = 536821760  # 524240 KB
+access = "rw"
+
+[[memories]]
+name = "EFUSE"
+kind = "external"
+base_address = 0x00000000
+size_bytes = 512
+access = "rw"
+
+# ---------------------------------------------------------------------------
+# System clock — minimal post-reset + max profile.
+# Refine with PLL params + named oscillators per family datasheet.
+# ---------------------------------------------------------------------------
+
+[system_clock.post_reset_profile]
+name = "factory-default"
+sysclk_hz = 4_000_000  # 4 MHz
+hclk_hz = 4_000_000  # 4 MHz
+pclk_hz = 4_000_000  # 4 MHz
+source = "internal-rc"
+
+[[system_clock.recommended_profiles]]
+name = "cortexm4f-max"
+sysclk_hz = 48_000_000  # 48 MHz
+hclk_hz = 48_000_000  # 48 MHz
+pclk_hz = 48_000_000  # 48 MHz
+source = "pll"

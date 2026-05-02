@@ -1,0 +1,269 @@
+# PIC32CK-SG family overlay — auto-scaffolded by
+# scripts/scaffold_family_overlay.py from PIC32CK2051SG00144.atdf.
+#
+# Core (per ATDF <device architecture>): Cortex-M3
+# CHIP_FREQ_CPU_MAX:                     48_000_000 Hz
+#
+# Refine peripheral max clocks from the family datasheet
+# when you need silicon-accurate ceilings — these are
+# conservative defaults derived from CPU_MAX.
+
+# ---------------------------------------------------------------------------
+# ADC / UART / SPI / I²C max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+max_clock_hz = 16_000_000  # 16 MHz
+
+[uart]
+max_baud_hz = 6_000_000  # 6 MHz
+
+[spi]
+max_clock_hz = 24_000_000  # 24 MHz
+
+[i2c]
+max_clock_hz = 1_000_000  # 1 MHz (Fast-Mode-Plus, supported by every modern Atmel SERCOM/TWIHS)
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (auto-populated from ATDF <address-space><memory-segment>)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "CMCC_DATARAM"
+kind = "sram"
+base_address = 0x00000000
+size_bytes = 4096  # 4 KB
+access = "rwx"
+
+[[memories]]
+name = "CMCC_TAGRAM"
+kind = "sram"
+base_address = 0x00001000
+size_bytes = 1024  # 1 KB
+access = "rw"
+
+[[memories]]
+name = "CMCC_VALIDRAM"
+kind = "sram"
+base_address = 0x00003000
+size_bytes = 64
+access = "rw"
+
+[[memories]]
+name = "PRM_ROM"
+kind = "rom"
+base_address = 0x04000000
+size_bytes = 32768  # 32 KB
+access = "rx"
+
+[[memories]]
+name = "FLASH_BFM"
+kind = "flash"
+base_address = 0x08000000
+size_bytes = 131072  # 128 KB
+access = "rwx"
+address_space = "code"
+
+[[memories]]
+name = "FLASH_CFM_USERCFG1"
+kind = "flash"
+base_address = 0x0A000000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FLASH_CFM_USEROTP1"
+kind = "external"
+base_address = 0x0A001000
+size_bytes = 4096  # 4 KB
+access = "rw"
+
+[[memories]]
+name = "FLASH_CFM_BOOTCFG1"
+kind = "flash"
+base_address = 0x0A002000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FLASH_CFM_DALCFG"
+kind = "flash"
+base_address = 0x0A004000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FLASH_CFM_CALBACKUP"
+kind = "flash"
+base_address = 0x0A006000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FLASH_CFM_CALOTP"
+kind = "external"
+base_address = 0x0A007000
+size_bytes = 4096  # 4 KB
+access = "ro"
+
+[[memories]]
+name = "FLASH_CFM_USERCFG2"
+kind = "flash"
+base_address = 0x0A008000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FLASH_CFM_USEROTP2"
+kind = "external"
+base_address = 0x0A009000
+size_bytes = 4096  # 4 KB
+access = "rw"
+
+[[memories]]
+name = "FLASH_CFM_BOOTCFG2"
+kind = "flash"
+base_address = 0x0A00A000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FLASH_PFM"
+kind = "flash"
+base_address = 0x0C000000
+size_bytes = 2097152  # 2 MB
+access = "rwx"
+address_space = "code"
+
+[[memories]]
+name = "SQI_SFR"
+kind = "io"
+base_address = 0x0FFFF000
+size_bytes = 4096  # 4 KB
+access = "rw"
+
+[[memories]]
+name = "SQI_XIP"
+kind = "sram"
+base_address = 0x10000000
+size_bytes = 268435456  # 256 MB
+access = "rwx"
+
+[[memories]]
+name = "HSRAM_RET"
+kind = "sram"
+base_address = 0x20000000
+size_bytes = 524288  # 512 KB
+access = "rwx"
+address_space = "data"
+
+[[memories]]
+name = "HPB0_BRIDGE"
+kind = "io"
+base_address = 0x44000000
+size_bytes = 196608  # 192 KB
+access = "rw"
+
+[[memories]]
+name = "HPB1_BRIDGE"
+kind = "io"
+base_address = 0x44800000
+size_bytes = 196608  # 192 KB
+access = "rw"
+
+[[memories]]
+name = "HPB2_BRIDGE"
+kind = "io"
+base_address = 0x45000000
+size_bytes = 196608  # 192 KB
+access = "rw"
+
+[[memories]]
+name = "USBHS_SFR"
+kind = "io"
+base_address = 0x46000000
+size_bytes = 5632
+access = "rw"
+
+[[memories]]
+name = "HSM_SFR"
+kind = "io"
+base_address = 0x48000000
+size_bytes = 4096  # 4 KB
+access = "rw"
+
+[[memories]]
+name = "EBI_CS0"
+kind = "sram"
+base_address = 0x60000000
+size_bytes = 16777216  # 16 MB
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS1"
+kind = "sram"
+base_address = 0x61000000
+size_bytes = 16777216  # 16 MB
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS2"
+kind = "sram"
+base_address = 0x62000000
+size_bytes = 16777216  # 16 MB
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS3"
+kind = "sram"
+base_address = 0x63000000
+size_bytes = 16777216  # 16 MB
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "PPB"
+kind = "io"
+base_address = 0xE0000000
+size_bytes = 1048576  # 1 MB
+access = "rw"
+
+# ---------------------------------------------------------------------------
+# System clock — minimal post-reset + max profile.
+# Refine with PLL params + named oscillators per family datasheet.
+# ---------------------------------------------------------------------------
+
+[system_clock.post_reset_profile]
+name = "factory-default"
+sysclk_hz = 1_000_000  # 1 MHz
+hclk_hz = 1_000_000  # 1 MHz
+pclk_hz = 1_000_000  # 1 MHz
+source = "internal-rc"
+
+[[system_clock.recommended_profiles]]
+name = "cortexm3-max"
+sysclk_hz = 48_000_000  # 48 MHz
+hclk_hz = 48_000_000  # 48 MHz
+pclk_hz = 48_000_000  # 48 MHz
+source = "pll"

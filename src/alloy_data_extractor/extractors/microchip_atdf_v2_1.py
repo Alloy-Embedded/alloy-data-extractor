@@ -501,7 +501,22 @@ def _detect_core(root: ET.Element) -> dict[str, Any]:
     family = _attr(device, "family").lower()
     a_lower = arch.lower()
     if a_lower.startswith("avr"):
-        return {"isa": "avr", "name": f"avr-{family}" if family else "avr", "bits": 8}
+        # ATtiny ATDFs declare family="avr tiny" (with a space) —
+        # collapse whitespace so the v2.1 identity name stays a
+        # plain slug ("avr-tiny" not "avr-avr tiny").
+        fam_slug = "-".join(family.split()) or "avr"
+        return {"isa": "avr", "name": f"avr-{fam_slug}", "bits": 8}
+    # MIPS — PIC32MX/MZ/MK/MM line.  Microchip ATDFs declare
+    # architecture="MIPS" without further qualification; the
+    # actual core is M4K (MX) / microAptiv (MZ/MK).  v2.1
+    # convention: isa="mips32" + name from family slug so
+    # downstream codegen can disambiguate.
+    if a_lower == "mips" or a_lower.startswith("mips"):
+        return {
+            "isa":  "mips32",
+            "name": "pic32-m4k" if family.startswith("pic32mx") else "pic32-microaptiv",
+            "bits": 32,
+        }
     # Cortex-M7 (SAME70, SAMS70, SAMV70/V71) — Cortex-M7F with FPU + MPU,
     # ARMv7E-M ISA.  Architecture string is "CORTEX-M7" verbatim in ATDF.
     if "cortex-m7" in a_lower:

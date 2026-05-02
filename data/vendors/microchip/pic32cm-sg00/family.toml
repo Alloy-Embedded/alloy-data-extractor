@@ -1,0 +1,188 @@
+# PIC32CM-SG00 family overlay — auto-scaffolded by
+# scripts/scaffold_family_overlay.py from PIC32CM5112SG00048.atdf.
+#
+# Core (per ATDF <device architecture>): Cortex-M23
+# CHIP_FREQ_CPU_MAX:                     48_000_000 Hz
+#
+# Refine peripheral max clocks from the family datasheet
+# when you need silicon-accurate ceilings — these are
+# conservative defaults derived from CPU_MAX.
+
+# ---------------------------------------------------------------------------
+# ADC / UART / SPI / I²C max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+max_clock_hz = 16_000_000  # 16 MHz
+
+[uart]
+max_baud_hz = 6_000_000  # 6 MHz
+
+[spi]
+max_clock_hz = 24_000_000  # 24 MHz
+
+[i2c]
+max_clock_hz = 1_000_000  # 1 MHz (Fast-Mode-Plus, supported by every modern Atmel SERCOM/TWIHS)
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (auto-populated from ATDF <address-space><memory-segment>)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "BROMC_ROM"
+kind = "rom"
+base_address = 0x04000000
+size_bytes = 65536  # 64 KB
+access = "rx"
+
+[[memories]]
+name = "FCR_BFM"
+kind = "flash"
+base_address = 0x08000000
+size_bytes = 16384  # 16 KB
+access = "rwx"
+address_space = "code"
+
+[[memories]]
+name = "FCR_CFM_BOOTCFG1A"
+kind = "flash"
+base_address = 0x0A000000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FCR_CFM_USEROTP"
+kind = "external"
+base_address = 0x0A001000
+size_bytes = 4096  # 4 KB
+access = "rw"
+
+[[memories]]
+name = "FCR_CFM_BOOTCFG1"
+kind = "flash"
+base_address = 0x0A002000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FCR_CFM_ROMCFG"
+kind = "flash"
+base_address = 0x0A003000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FCR_CFM_VSS0"
+kind = "flash"
+base_address = 0x0A004000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FCR_CFM_VSS1"
+kind = "flash"
+base_address = 0x0A005000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FCR_CFM_TEST"
+kind = "flash"
+base_address = 0x0A006000
+size_bytes = 4096  # 4 KB
+access = "rw"
+address_space = "code"
+
+[[memories]]
+name = "FCR_CFM_CALOTP"
+kind = "external"
+base_address = 0x0A007000
+size_bytes = 4096  # 4 KB
+access = "ro"
+
+[[memories]]
+name = "FCR_PFM"
+kind = "flash"
+base_address = 0x0C000000
+size_bytes = 524288  # 512 KB
+access = "rwx"
+address_space = "code"
+
+[[memories]]
+name = "MCRAMC_RET"
+kind = "sram"
+base_address = 0x20000000
+size_bytes = 131072  # 128 KB
+access = "rwx"
+address_space = "data"
+
+[[memories]]
+name = "APB0_BRIDGE"
+kind = "io"
+base_address = 0x44000000
+size_bytes = 212992  # 208 KB
+access = "rw"
+
+[[memories]]
+name = "APB1_BRIDGE"
+kind = "io"
+base_address = 0x44800000
+size_bytes = 237568  # 232 KB
+access = "rw"
+
+[[memories]]
+name = "APB2_BRIDGE"
+kind = "io"
+base_address = 0x45000000
+size_bytes = 65536  # 64 KB
+access = "rw"
+
+[[memories]]
+name = "HSM_SFR"
+kind = "io"
+base_address = 0x4F000000
+size_bytes = 98304  # 96 KB
+access = "rw"
+
+[[memories]]
+name = "PPB"
+kind = "io"
+base_address = 0xE0000000
+size_bytes = 1048576  # 1 MB
+access = "rw"
+
+# ---------------------------------------------------------------------------
+# System clock — minimal post-reset + max profile.
+# Refine with PLL params + named oscillators per family datasheet.
+# ---------------------------------------------------------------------------
+
+[system_clock.post_reset_profile]
+name = "factory-default"
+sysclk_hz = 1_000_000  # 1 MHz
+hclk_hz = 1_000_000  # 1 MHz
+pclk_hz = 1_000_000  # 1 MHz
+source = "internal-rc"
+
+[[system_clock.recommended_profiles]]
+name = "cortexm23-max"
+sysclk_hz = 48_000_000  # 48 MHz
+hclk_hz = 48_000_000  # 48 MHz
+pclk_hz = 48_000_000  # 48 MHz
+source = "pll"
