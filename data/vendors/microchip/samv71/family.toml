@@ -1,0 +1,184 @@
+# SAM V71 family overlay — Cortex-M7F with Ethernet AVB + CAN-FD,
+# built for automotive / industrial control.  Architecture is
+# identical to SAME70 (same PMC, same EFC, same memory map);
+# the SoC differences are peripheral availability + AVB hardware
+# acceleration.
+#
+# Sourced from:
+#   * SAM V71/V70/E70/S70 Family Data Sheet DS60001527E
+#   * Per-chip ATDF (ATSAMV71Q21B.atdf etc.)
+
+# ---------------------------------------------------------------------------
+# ADC (AFEC0 / AFEC1 — same IP as E70)
+# ---------------------------------------------------------------------------
+
+[adc]
+max_clock_hz = 16_000_000
+
+# ---------------------------------------------------------------------------
+# UART / SPI / TWIHS — same IP versions as E70
+# ---------------------------------------------------------------------------
+
+[uart]
+max_baud_hz = 18_750_000
+
+[spi]
+max_clock_hz = 75_000_000
+
+[i2c]
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions — identical map to E70 (drop-in compatible)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "ITCM"
+kind = "sram"
+base_address = 0x0000_0000
+size_bytes = 131072
+access = "rwx"
+role = "tcm"
+
+[[memories]]
+name = "IFLASH"
+kind = "flash"
+base_address = 0x0040_0000
+size_bytes = 2097152   # 2 MB on Q21B
+access = "rx"
+address_space = "code"
+
+[[memories]]
+name = "IROM"
+kind = "rom"
+base_address = 0x0080_0000
+size_bytes = 16384
+access = "rx"
+role = "boot-rom"
+
+[[memories]]
+name = "DTCM"
+kind = "sram"
+base_address = 0x2000_0000
+size_bytes = 131072
+access = "rwx"
+role = "tcm"
+
+[[memories]]
+name = "IRAM"
+kind = "sram"
+base_address = 0x2040_0000
+size_bytes = 393216
+access = "rwx"
+address_space = "data"
+
+[[memories]]
+name = "EBI_CS0"
+kind = "external"
+base_address = 0x6000_0000
+size_bytes = 16777216
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS1"
+kind = "external"
+base_address = 0x6100_0000
+size_bytes = 16777216
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS2"
+kind = "external"
+base_address = 0x6200_0000
+size_bytes = 16777216
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "EBI_CS3"
+kind = "external"
+base_address = 0x6300_0000
+size_bytes = 16777216
+access = "rwx"
+role = "external-bus"
+
+[[memories]]
+name = "QSPIMEM"
+kind = "external"
+base_address = 0x8000_0000
+size_bytes = 536870912
+access = "rwx"
+role = "xip"
+
+[[memories]]
+name = "AXIMX"
+kind = "io"
+base_address = 0xA000_0000
+size_bytes = 1048576
+access = "rw"
+
+[[memories]]
+name = "PERIPHERALS"
+kind = "io"
+base_address = 0x4000_0000
+size_bytes = 536870912
+access = "rw"
+
+[[memories]]
+name = "SYSTEM"
+kind = "io"
+base_address = 0xE000_0000
+size_bytes = 268435456
+access = "rw"
+
+# ---------------------------------------------------------------------------
+# System clock — identical PMC topology to E70
+# ---------------------------------------------------------------------------
+
+[system_clock.post_reset_profile]
+name = "factory-mainck-rc-4mhz"
+sysclk_hz = 4_000_000
+hclk_hz = 4_000_000
+pclk_hz = 4_000_000
+source = "MAINCK_RC4"
+
+[[system_clock.recommended_profiles]]
+name = "mainck-rc-12mhz"
+sysclk_hz = 12_000_000
+hclk_hz = 12_000_000
+pclk_hz = 12_000_000
+source = "MAINCK_RC12"
+
+[[system_clock.recommended_profiles]]
+name = "plla-150mhz"
+sysclk_hz = 150_000_000
+hclk_hz = 150_000_000
+pclk_hz = 75_000_000
+source = "PLLA_MAINCK"
+pll_mul = 25
+pll_div = 1
+pll_post_div = 2
+
+[[system_clock.recommended_profiles]]
+name = "plla-300mhz-max"
+sysclk_hz = 300_000_000
+hclk_hz = 300_000_000
+pclk_hz = 150_000_000
+source = "PLLA_MAINCK"
+pll_mul = 25
+pll_div = 1
+pll_post_div = 1

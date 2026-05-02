@@ -1,0 +1,113 @@
+# SAM D21 family overlay — Cortex-M0+ general-purpose line widely
+# used in Arduino MKR / Adafruit Feather M0 / Trinket M0 boards.
+# Covers ATSAMD21E/G/J variants in QFN/QFP/WLCSP packages.
+#
+# Sourced from:
+#   * SAM D21 / DA1 Family Data Sheet DS40001882 (rev I)
+#   * SAM D21 Reference Manual (Atmel-42181)
+#   * Per-chip ATDF (ATSAMD21G18A.atdf etc.)
+#
+# D21 ADC carries factory linearity / bias calibration constants
+# in the NVM Software Calibration Area at 0x806020 (auxiliary
+# row).  Temperature sensor calibration (TEMP_LOG fuses) is also
+# stored there but read at runtime via the NVMCTRL controller.
+
+# ---------------------------------------------------------------------------
+# ADC
+# ---------------------------------------------------------------------------
+
+[adc]
+# DS40001882 §32.6.1 — ADC max sample rate 350 ksps; max ADC clock
+# = GCLK_ADC / DIV_min = up to 2.1 MHz typical (not the GCLK clock).
+max_clock_hz = 2_100_000
+
+# ---------------------------------------------------------------------------
+# UART / SPI / I²C — SERCOM unified (mode-switched at runtime)
+# ---------------------------------------------------------------------------
+
+[uart]
+# DS40001882 §26.6.2 — SERCOM USART async max = GCLK / 16 ≈ 3 Mbaud
+# at GCLK = 48 MHz.
+max_baud_hz = 3_000_000
+
+[spi]
+# §27.6 — SERCOM SPI master max = GCLK / 2 = 24 MHz at GCLK = 48 MHz.
+max_clock_hz = 24_000_000
+
+[i2c]
+# §28.6 — SERCOM I²C Fast-Mode-Plus = 1 MHz, Hs-Mode (3.4 MHz)
+# unsupported on D21.
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions
+# ---------------------------------------------------------------------------
+
+# Flash — application image.  G18A = 256 KB; smaller variants
+# override per-device.  Auxiliary NVM rows (calibration, user
+# row) live above the main flash and are managed by NVMCTRL.
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0x0000_0000
+size_bytes = 262144   # 256 KB on G18A — overridable per-device
+access = "rx"
+address_space = "code"
+
+# HSRAM — high-speed RAM. G18A = 32 KB.
+[[memories]]
+name = "HSRAM"
+kind = "sram"
+base_address = 0x2000_0000
+size_bytes = 32768
+access = "rwx"
+address_space = "data"
+
+# Boot ROM — factory boot loader (small, used by USB DFU).
+[[memories]]
+name = "BOOTROM"
+kind = "rom"
+base_address = 0x0080_0000
+size_bytes = 8192
+access = "rx"
+role = "boot-rom"
+
+# ---------------------------------------------------------------------------
+# System clock
+# ---------------------------------------------------------------------------
+# DS40001882 §17 — D21 boots from OSC8M / 8 = 1 MHz on cold reset
+# (DIV=3 by default), max sysclk 48 MHz via DFLL48M closed-loop
+# locked to XOSC32K or open-loop on OSC32K.
+
+[system_clock.post_reset_profile]
+name = "factory-osc8m-div8-1mhz"
+sysclk_hz = 1_000_000
+hclk_hz = 1_000_000
+pclk_hz = 1_000_000
+source = "OSC8M_DIV8"
+
+[[system_clock.recommended_profiles]]
+name = "osc8m-8mhz"
+sysclk_hz = 8_000_000
+hclk_hz = 8_000_000
+pclk_hz = 8_000_000
+source = "OSC8M"
+
+[[system_clock.recommended_profiles]]
+name = "dfll48m-48mhz-max"
+sysclk_hz = 48_000_000
+hclk_hz = 48_000_000
+pclk_hz = 48_000_000
+source = "DFLL48M"

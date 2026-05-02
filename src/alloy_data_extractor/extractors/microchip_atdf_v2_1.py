@@ -450,7 +450,18 @@ def _extract_modules_block(root: ET.Element) -> tuple[
             # ISA in identity.core.
             if idx < 0:
                 continue
-            full_name = f"{mod_inst}_{name}_vect" if mod_inst else f"{name}_vect"
+            # Normalise the module-instance prefix for shared IRQs.
+            # SAML21 declares some vectors as
+            # ``module-instance="MCLK OSCCTRL OSC32KCTRL PAC PM SUPC"``
+            # (six peripherals sharing slot 0).  Spaces aren't
+            # legal in v2.1's ``irq_entry.name`` (matches
+            # ``^[A-Za-z_][A-Za-z0-9_]*$``) so we collapse runs of
+            # whitespace into a single underscore.
+            mod_inst_safe = "_".join(mod_inst.split()) if mod_inst else ""
+            full_name = (
+                f"{mod_inst_safe}_{name}_vect" if mod_inst_safe
+                else f"{name}_vect"
+            )
             key = (idx, full_name)
             if key in seen_irq:
                 continue
@@ -501,6 +512,12 @@ def _detect_core(root: ET.Element) -> dict[str, Any]:
     # Cortex-M3 — SAM3 line.
     if "cortex-m3" in a_lower:
         return {"isa": "armv7-m", "name": "cortex-m3", "bits": 32, "mpu": True}
+    # Cortex-M0+ — SAMD09/D10/D11/D20/D21, SAML10/L11/L21/L22, SAMC20/C21,
+    # SAMR21/R30/R34/R35.  ARMv6-M ISA + optional MPU on the
+    # M0PLUS variant (vs plain M0).  Match before the bare M0
+    # branch so the MPU flag survives.
+    if "cortex-m0plus" in a_lower or "cortex-m0+" in a_lower:
+        return {"isa": "armv6-m", "name": "cortex-m0plus", "bits": 32, "mpu": True}
     if a_lower.startswith("armv6") or "cortex-m0" in a_lower:
         return {"isa": "armv6-m", "name": "cortex-m0", "bits": 32}
     return {"isa": a_lower or "unknown", "name": _attr(device, "name").lower(), "bits": 32}

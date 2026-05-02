@@ -1,0 +1,121 @@
+# SAM D51 family overlay — Cortex-M4F mid-range performer with
+# floating-point + DSP, dual-bank flash, and USB FS/HS.  Used in
+# Adafruit Feather M4 / Metro M4 / Grand Central boards.
+# Covers ATSAMD51G/J/N/P variants in QFN/QFP packages.
+#
+# Sourced from:
+#   * SAM D5x/E5x Family Data Sheet DS60001507G
+#   * SAM D5x/E5x Reference Manual (Microchip 60001507)
+#   * Per-chip ATDF (ATSAMD51J19A.atdf etc.)
+
+# ---------------------------------------------------------------------------
+# ADC
+# ---------------------------------------------------------------------------
+
+[adc]
+# DS60001507G §45 — 12-bit ADC, max 1 Msps single-ended @ ADC clock 16 MHz.
+max_clock_hz = 16_000_000
+
+# ---------------------------------------------------------------------------
+# UART / SPI / I²C — SERCOM v2 (8 instances on D51J/N/P)
+# ---------------------------------------------------------------------------
+
+[uart]
+# §34 — SERCOM USART async max = GCLK / 16 ≈ 7.5 Mbaud at GCLK = 120 MHz.
+max_baud_hz = 7_500_000
+
+[spi]
+# §35 — SERCOM SPI master max = GCLK / 2 = 60 MHz at GCLK = 120 MHz.
+max_clock_hz = 60_000_000
+
+[i2c]
+# §36 — SERCOM I²C Fast-Mode-Plus = 1 MHz; HS-mode unsupported.
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions
+# ---------------------------------------------------------------------------
+
+# Internal flash — J19A = 512 KB; J20A = 1 MB; smaller variants override.
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0x0000_0000
+size_bytes = 524288   # 512 KB on J19A
+access = "rx"
+address_space = "code"
+
+# HSRAM — high-speed RAM with optional ECC.  J19A = 192 KB.
+[[memories]]
+name = "HSRAM"
+kind = "sram"
+base_address = 0x2000_0000
+size_bytes = 196608   # 192 KB on J19A
+access = "rwx"
+address_space = "data"
+
+# Boot ROM — 8 KB factory boot.
+[[memories]]
+name = "BOOTROM"
+kind = "rom"
+base_address = 0x0200_0000
+size_bytes = 8192
+access = "rx"
+role = "boot-rom"
+
+# QSPI XIP region — external SPI flash mapped at 0x04000000.
+[[memories]]
+name = "QSPI"
+kind = "external"
+base_address = 0x0400_0000
+size_bytes = 16777216  # 16 MB window
+access = "rx"
+role = "xip"
+
+# Backup RAM — battery-backed 8 KB.
+[[memories]]
+name = "BKUPRAM"
+kind = "sram"
+base_address = 0x4700_0000
+size_bytes = 8192
+access = "rwx"
+role = "battery-backed"
+
+# ---------------------------------------------------------------------------
+# System clock
+# ---------------------------------------------------------------------------
+# DS60001507G §13 — D51 boots from DFLL48M at 48 MHz with /12 divider
+# (= 4 MHz), max sysclk 120 MHz via FDPLL200M from XOSC32K or DFLL.
+
+[system_clock.post_reset_profile]
+name = "factory-dfll48m-div12-4mhz"
+sysclk_hz = 4_000_000
+hclk_hz = 4_000_000
+pclk_hz = 4_000_000
+source = "DFLL48M_DIV12"
+
+[[system_clock.recommended_profiles]]
+name = "dfll48m-48mhz"
+sysclk_hz = 48_000_000
+hclk_hz = 48_000_000
+pclk_hz = 48_000_000
+source = "DFLL48M"
+
+[[system_clock.recommended_profiles]]
+name = "fdpll200m-120mhz-max"
+sysclk_hz = 120_000_000
+hclk_hz = 120_000_000
+pclk_hz = 60_000_000
+source = "FDPLL200M_XOSC32K"

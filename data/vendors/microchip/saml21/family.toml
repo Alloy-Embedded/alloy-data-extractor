@@ -1,0 +1,120 @@
+# SAM L21 family overlay — Cortex-M0+ low-power line, sibling
+# to D21 with extended power-domain features (PicoPower).  Used
+# in IoT designs targeting battery-powered operation.
+#
+# Sourced from:
+#   * SAM L21 Family Data Sheet DS60001477C
+#   * SAM L21 Reference Manual (Atmel-42385)
+#   * Per-chip ATDF (ATSAML21J18B.atdf etc.)
+
+# ---------------------------------------------------------------------------
+# ADC
+# ---------------------------------------------------------------------------
+
+[adc]
+# DS60001477C §39 — 12-bit ADC max sample 1 Msps @ ADC clock 1 MHz typical.
+max_clock_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# UART / SPI / I²C — SERCOM v2 with low-power optimisation
+# ---------------------------------------------------------------------------
+
+[uart]
+# §32 — async max = GCLK / 16 ≈ 3 Mbaud at GCLK = 48 MHz.
+max_baud_hz = 3_000_000
+
+[spi]
+# §33 — SPI master max = GCLK / 2 = 24 MHz at GCLK = 48 MHz.
+max_clock_hz = 24_000_000
+
+[i2c]
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions
+# ---------------------------------------------------------------------------
+
+# Flash — J18B = 256 KB.
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0x0000_0000
+size_bytes = 262144   # 256 KB on J18B
+access = "rx"
+address_space = "code"
+
+# Low-power Flash — auxiliary "data flash" used for EEPROM
+# emulation.  J18B = 8 KB.
+[[memories]]
+name = "RWWFLASH"
+kind = "flash"
+base_address = 0x0040_0000
+size_bytes = 8192
+access = "rw"
+role = "rww-eeprom-emul"
+
+# HSRAM — main system RAM.  J18B = 32 KB.
+[[memories]]
+name = "HSRAM"
+kind = "sram"
+base_address = 0x2000_0000
+size_bytes = 32768
+access = "rwx"
+address_space = "data"
+
+# Low-power RAM — survives PicoPower retention modes.
+[[memories]]
+name = "LPRAM"
+kind = "sram"
+base_address = 0x3000_0000
+size_bytes = 8192
+access = "rwx"
+role = "low-power-retention"
+
+# Boot ROM
+[[memories]]
+name = "BOOTROM"
+kind = "rom"
+base_address = 0x0080_0000
+size_bytes = 8192
+access = "rx"
+role = "boot-rom"
+
+# ---------------------------------------------------------------------------
+# System clock
+# ---------------------------------------------------------------------------
+# DS60001477C §16 — L21 boots from OSC16M @ 4 MHz (default
+# FRANGE), max sysclk 48 MHz via DFLL48M closed-loop.
+
+[system_clock.post_reset_profile]
+name = "factory-osc16m-4mhz"
+sysclk_hz = 4_000_000
+hclk_hz = 4_000_000
+pclk_hz = 4_000_000
+source = "OSC16M_4MHZ"
+
+[[system_clock.recommended_profiles]]
+name = "osc16m-16mhz"
+sysclk_hz = 16_000_000
+hclk_hz = 16_000_000
+pclk_hz = 16_000_000
+source = "OSC16M_16MHZ"
+
+[[system_clock.recommended_profiles]]
+name = "dfll48m-48mhz-max"
+sysclk_hz = 48_000_000
+hclk_hz = 48_000_000
+pclk_hz = 48_000_000
+source = "DFLL48M"
