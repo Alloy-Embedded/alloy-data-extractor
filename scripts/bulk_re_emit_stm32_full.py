@@ -85,10 +85,9 @@ class _ChipSources:
     cubemx_chip:   str             # XML basename inside <cubemx-db>/mcu
 
 
-# Hand-curated for the five admitted ST chips.  The CubeMX names
-# pick the chip's exact ordercode + package; the open-pin-data XML
-# usually covers a handful of variants behind the parenthesised
-# letters in the filename.
+# Originally-admitted ST chips — kept for back-compat / quick re-emit.
+# `--family stm32g0 --discover` adds every package variant the
+# STM32_open_pin_data ships, so this list isn't authoritative.
 _ADMITTED_STM32: tuple[_ChipSources, ...] = (
     _ChipSources(family="stm32g0", device="stm32g030f6",
                  svd="STM32G030.svd",
@@ -111,6 +110,73 @@ _ADMITTED_STM32: tuple[_ChipSources, ...] = (
                  open_pin_xml="STM32F405RGTx.xml",
                  cubemx_chip="STM32F405RGTx.xml"),
 )
+
+
+# ---------------------------------------------------------------------------
+# Auto-discover every package variant a family ships
+# ---------------------------------------------------------------------------
+
+
+_FAMILY_TO_SVD_PREFIXES: dict[str, tuple[str, ...]] = {
+    "stm32g0": (
+        "STM32G030", "STM32G031", "STM32G041",
+        "STM32G050", "STM32G051", "STM32G061",
+        "STM32G070", "STM32G071", "STM32G081",
+        "STM32G0B0", "STM32G0B1", "STM32G0C1",
+    ),
+    "stm32f4": (
+        "STM32F401", "STM32F405", "STM32F407", "STM32F410",
+        "STM32F411", "STM32F412", "STM32F413", "STM32F415",
+        "STM32F417", "STM32F423", "STM32F427", "STM32F429",
+        "STM32F437", "STM32F439", "STM32F446", "STM32F469",
+        "STM32F479",
+    ),
+}
+
+
+def _device_id_from_xml(xml_name: str) -> str:
+    """Pick the canonical device id from an open-pin-data XML name.
+
+    Strategy: take the FIRST ordercode within parenthesised ranges
+    so ``STM32G030C(6-8)Tx.xml`` → ``stm32g030c6tx``; non-paren
+    names just lose the ``.xml`` suffix.
+    """
+    stem = xml_name.rsplit(".", 1)[0]
+    if "(" in stem and ")" in stem:
+        # Take the first option inside the first paren group.
+        prefix, rest = stem.split("(", 1)
+        opts, suffix = rest.split(")", 1)
+        first = opts.split("-", 1)[0]
+        stem = f"{prefix}{first}{suffix}"
+    return stem.lower()
+
+
+def _resolve_svd_for_xml(xml_name: str, family: str) -> str | None:
+    """Find the SVD basename whose prefix matches the open-pin-data XML."""
+    upper = xml_name.upper()
+    for prefix in _FAMILY_TO_SVD_PREFIXES.get(family, ()):
+        if upper.startswith(prefix):
+            return f"{prefix}.svd"
+    return None
+
+
+def _discover_family_chips(
+    family: str, open_pin_dir: Path,
+) -> tuple[_ChipSources, ...]:
+    """Return one _ChipSources per open-pin-data XML in ``family``."""
+    out: list[_ChipSources] = []
+    for prefix in _FAMILY_TO_SVD_PREFIXES.get(family, ()):
+        for xml in sorted(open_pin_dir.glob(f"{prefix}*.xml")):
+            name = xml.name
+            device = _device_id_from_xml(name)
+            svd = _resolve_svd_for_xml(name, family)
+            if svd is None:
+                continue
+            out.append(_ChipSources(
+                family=family, device=device,
+                svd=svd, open_pin_xml=name, cubemx_chip=name,
+            ))
+    return tuple(out)
 
 
 # ---------------------------------------------------------------------------
@@ -229,15 +295,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cubemx-db", type=Path, default=_DEFAULT_CUBEMX_DB)
     parser.add_argument("--chip", default=None,
                         help="Limit run to a single admitted device.")
+    parser.add_argument("--family", default=None,
+                        help="When set with --discover, bulk-emit every "
+                             "open-pin-data XML for the family (stm32g0 / "
+                             "stm32f4 / …).")
+    parser.add_argument("--discover", action="store_true",
+                        help="Discover all package variants under "
+                             "--family from open-pin-data instead of using "
+                             "the admitted hand-curated list.")
     args = parser.parse_args(argv)
 
-    matches = _ADMITTED_STM32
+    if args.discover:
+        if not args.family:
+            print("ERROR: --discover requires --family", file=sys.stderr)
+            return 2
+        matches = _discover_family_chips(args.family, args.open_pin_data_dir)
+        if not matches:
+            print(f"ERROR: no open-pin-data XMLs found for family "
+                  f"{args.family!r} under {args.open_pin_data_dir}",
+                  file=sys.stderr)
+            return 1
+    else:
+        matches = _ADMITTED_STM32
     if args.chip:
         matches = tuple(c for c in matches if c.device == args.chip)
         if not matches:
-            print(f"ERROR: chip {args.chip!r} not in admitted set.", file=sys.stderr)
-            print("Admitted: " + ", ".join(c.device for c in _ADMITTED_STM32),
-                  file=sys.stderr)
+            print(f"ERROR: chip {args.chip!r} not in match set.", file=sys.stderr)
             return 2
 
     cubemx_db = args.cubemx_db if args.cubemx_db.is_dir() else None
