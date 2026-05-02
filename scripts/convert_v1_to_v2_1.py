@@ -445,6 +445,10 @@ def _convert_templates(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if rid and rid in reg_offsets and reg_name.lower() not in template_register_offsets[ip]:
             template_register_offsets[ip][reg_name.lower()] = reg_offsets[rid]
 
+    # Build per-IP `options` block from the v1 tier-2/3/4 flat lists.
+    per_ip_options = _build_template_options(payload, per_to_ip)
+    per_ip_max_clock = _build_template_max_clocks(payload)
+
     # Render templates
     out: dict[str, dict[str, Any]] = {}
     for ip_name, by_reg in sorted(templates.items()):
@@ -463,16 +467,310 @@ def _convert_templates(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
                         "bits": [bit_offset, bit_offset + bit_width - 1],
                     }
         ip_template: dict[str, Any] = {}
+        if ip_name in per_ip_options:
+            ip_template["options"] = per_ip_options[ip_name]
+        if ip_name in per_ip_max_clock:
+            for k, v in per_ip_max_clock[ip_name].items():
+                ip_template[k] = v
         if registers_block: ip_template["registers"] = registers_block
         if fields_block:    ip_template["fields"] = fields_block
         if ip_template:
             out[ip_name] = ip_template
+
+    # Also render templates that exist only via tier-2/3/4 data (no
+    # register_fields[] rows survived the v1 extraction).
+    for ip_name, options in per_ip_options.items():
+        if ip_name in out:
+            continue
+        seed: dict[str, Any] = {"options": options}
+        if ip_name in per_ip_max_clock:
+            for k, v in per_ip_max_clock[ip_name].items():
+                seed[k] = v
+        out[ip_name] = seed
+    return out
+
+
+def _build_template_options(
+    payload: dict[str, Any],
+    per_to_ip: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Fold the v1 ``adc_*``/``uart_*``/``spi_*``/``i2c_*``/
+    ``timer_*``/``pwm_*`` tier flat lists into per-IP options maps."""
+
+    def _vals(rows: list[Any], field_name: str) -> list[Any]:
+        out = []
+        for r in rows:
+            if isinstance(r, dict) and field_name in r:
+                out.append(r[field_name])
+        return out
+
+    def _vals_for_ip(ip_name: str, rows: list[Any], field_name: str) -> list[Any]:
+        # If the v1 row carries `peripheral`, filter on it; otherwise return
+        # all values (chip-wide).
+        out = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            per = r.get("peripheral")
+            if per is None or per_to_ip.get(per, "").lower() == ip_name:
+                if field_name in r:
+                    out.append(r[field_name])
+        return out
+
+    out: dict[str, dict[str, Any]] = defaultdict(dict)
+
+    # ADC
+    res = _vals(payload.get("adc_resolution_options") or [], "bits")
+    if res: out["adc"]["resolution"] = sorted(set(res))
+    cycles = _vals(payload.get("adc_sample_time_options") or [], "cycles_q8")
+    if cycles:
+        # cycles_q8 is fixed-point (8 fractional bits); convert to a
+        # human-readable list.
+        out["adc"]["sample_time_cycles"] = sorted({c / 256.0 for c in cycles})
+    over = _vals(payload.get("adc_oversampling_options") or [], "ratio")
+    if over: out["adc"]["oversampling"] = sorted(set(over))
+
+    # UART
+    db = _vals(payload.get("uart_data_bits_options") or [], "bits")
+    if db: out["usart"]["data_bits"] = sorted(set(db))
+    if db: out["uart"]["data_bits"] = sorted(set(db))
+    par = _vals(payload.get("uart_parity_options") or [], "kind")
+    if par: out["usart"]["parity"] = sorted(set(par))
+    if par: out["uart"]["parity"] = sorted(set(par))
+    sb = _vals(payload.get("uart_stop_bits_options") or [], "bits")
+    if sb: out["usart"]["stop_bits"] = sorted({str(s) for s in sb})
+    if sb: out["uart"]["stop_bits"] = sorted({str(s) for s in sb})
+
+    # SPI
+    bp = _vals(payload.get("spi_baud_prescaler_options") or [], "divisor")
+    if bp: out["spi"]["baud_prescaler"] = sorted(set(bp))
+
+    # I2C
+    sp = _vals(payload.get("i2c_speed_options") or [], "speed_hz")
+    if sp: out["i2c"]["speeds"] = sorted({_hz_with_unit(s) for s in sp if isinstance(s, int)})
+
+    # Timer
+    tp = _vals(payload.get("timer_prescaler_options") or [], "max_value")
+    if tp: out["timer_general"]["prescaler_max"] = max(tp)
+
+    return dict(out)
+
+
+def _build_template_max_clocks(
+    payload: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Map the chip-wide ``adc_max_clock_hz`` / ``uart_max_baud_hz`` /
+    ``i2c_max_clock_hz`` ints onto per-IP template ``max_clock`` /
+    ``max_baud`` strings."""
+    out: dict[str, dict[str, Any]] = defaultdict(dict)
+    adc_hz = payload.get("adc_max_clock_hz")
+    if isinstance(adc_hz, int):
+        out["adc"]["max_clock"] = _hz_with_unit(adc_hz)
+    uart_baud = payload.get("uart_max_baud_hz")
+    if isinstance(uart_baud, int):
+        out["usart"]["max_baud"] = uart_baud
+        out["uart"]["max_baud"] = uart_baud
+    i2c_hz = payload.get("i2c_max_clock_hz")
+    if isinstance(i2c_hz, int):
+        out["i2c"]["max_clock"] = _hz_with_unit(i2c_hz)
+    return dict(out)
+
+
+def _build_pin_options_index(
+    payload: dict[str, Any],
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Invert ``gpio_pins[].alt_functions[]`` into a per-peripheral
+    map of ``signal_lower -> [{pin, remap}, …]``.
+
+    v1 stored pin↔function bindings on the GPIO side; v2.1 puts them
+    on the consumer (peripheral) side under ``pin_options``.
+    """
+    out: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for pin in payload.get("gpio_pins") or []:
+        if not isinstance(pin, dict):
+            continue
+        pin_id = pin.get("pin_id")
+        if not pin_id:
+            continue
+        for af in pin.get("alt_functions") or []:
+            if not isinstance(af, dict):
+                continue
+            per = af.get("peripheral")
+            sig = af.get("signal_name")
+            af_num = af.get("af_number")
+            if not (per and sig):
+                continue
+            entry: dict[str, Any] = {"pin": pin_id}
+            if isinstance(af_num, int):
+                # STM32 F4+ uses AF index in the GPIO AFR register;
+                # F1 uses remap.  We can't tell from v1 which one —
+                # store as `func` (v2.1 RP2040-style) which is the
+                # most general spelling.
+                entry["func"] = af_num
+            out[per][sig.lower()].append(entry)
+    return out
+
+
+def _build_calibration_block(
+    rows: list[Any],
+    context: dict[str, Any] | None,
+    target_per: str,
+) -> dict[str, Any] | None:
+    """Group v1 ``adc_calibration_data_points[]`` rows for one ADC
+    instance into the v2.1 ``calibration:`` block."""
+    cal: dict[str, Any] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("peripheral") != target_per:
+            continue
+        kind = row.get("kind") or ""
+        addr = row.get("address")
+        if not isinstance(addr, int):
+            continue
+        size_bits = row.get("size_bits", 16)
+        semantic = row.get("semantic_constant")
+        # Map v1's `vrefint_cal` / `ts_cal_low` / `ts_cal_high` to v2.1.
+        if "vrefint" in kind:
+            cal["vrefint"] = {
+                "rom_addr": _hex_addr(addr),
+                "size_bits": size_bits,
+                "nominal_mv": semantic,
+            }
+        elif "ts_cal_low" in kind or "low" in kind:
+            cal["ts_cal_low"] = {
+                "rom_addr": _hex_addr(addr),
+                "size_bits": size_bits,
+                "temp_celsius": semantic,
+            }
+        elif "ts_cal_high" in kind or "high" in kind:
+            cal["ts_cal_high"] = {
+                "rom_addr": _hex_addr(addr),
+                "size_bits": size_bits,
+                "temp_celsius": semantic,
+            }
+    if context and isinstance(context, dict) and context.get("peripheral") == target_per:
+        # Pull additional context (cal voltages, temp range) into the
+        # data points if the v1 row didn't carry them already.
+        v_mv = context.get("cal_voltage_mv")
+        if v_mv is not None and "vrefint" in cal and "nominal_mv" not in cal["vrefint"]:
+            cal["vrefint"]["nominal_mv"] = v_mv
+        t_low = context.get("cal_temp_low_celsius")
+        if t_low is not None and "ts_cal_low" in cal:
+            cal["ts_cal_low"]["temp_celsius"] = t_low
+        t_high = context.get("cal_temp_high_celsius")
+        if t_high is not None and "ts_cal_high" in cal:
+            cal["ts_cal_high"]["temp_celsius"] = t_high
+    return cal or None
+
+
+def _build_external_triggers(
+    rows: list[Any], target_per: str,
+) -> dict[str, list[dict[str, Any]]] | None:
+    """Group v1 ``adc_external_triggers[]`` for one ADC instance."""
+    regular: list[dict[str, Any]] = []
+    injected: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("peripheral") != target_per:
+            continue
+        source = row.get("source")
+        extsel = row.get("extsel_value")
+        polarity = row.get("default_polarity")
+        if not source:
+            continue
+        entry: dict[str, Any] = {"source": source}
+        if isinstance(extsel, int):
+            entry["extsel"] = extsel
+        if polarity == 1:
+            entry["polarity"] = "rising"
+        elif polarity == 2:
+            entry["polarity"] = "falling"
+        regular.append(entry)
+    out = {}
+    if regular:  out["regular"] = regular
+    if injected: out["injected"] = injected
+    return out or None
+
+
+def _build_internal_channels(
+    rows: list[Any], target_per: str,
+) -> dict[str, str] | None:
+    """ADC internal channels (vrefint, temp_sensor, vbat) → v2.1 channels map."""
+    out: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("peripheral") != target_per:
+            continue
+        kind = row.get("kind")
+        ch = row.get("channel_index")
+        if isinstance(ch, int) and kind:
+            # v2.1 keys channels as ``ch<N>: <internal-name>``.
+            label_map = {
+                "vrefint": "vrefint",
+                "temperature_sensor": "temp_sensor",
+                "vbat": "vbat",
+            }
+            label = label_map.get(kind, kind)
+            out[f"ch{ch}"] = label
+    return out or None
+
+
+def _build_timing_presets(
+    rows: list[Any], target_per: str,
+) -> list[dict[str, Any]] | None:
+    """I2C TIMINGR presets per (speed, source_clock)."""
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("peripheral") != target_per:
+            continue
+        speed_hz = row.get("speed_hz")
+        clk_hz = row.get("source_clock_hz")
+        timingr = row.get("timingr_value")
+        if not (isinstance(speed_hz, int) and isinstance(clk_hz, int)
+                and isinstance(timingr, int)):
+            continue
+        out.append({
+            "speed":        _hz_with_unit(speed_hz),
+            "source_clock": _hz_with_unit(clk_hz),
+            "timingr":      _hex_addr(timingr),
+        })
+    return out or None
+
+
+def _build_max_clock_overrides(rows: list[Any]) -> dict[str, str]:
+    """``peripheral_max_clock_hz[]`` → ``{<peripheral>: '<freq>MHz'}``."""
+    out: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        per = row.get("peripheral")
+        hz = row.get("max_clock_hz")
+        if per and isinstance(hz, int):
+            freq_str = _hz_with_unit(hz)
+            if freq_str:
+                out[per] = freq_str
     return out
 
 
 def _convert_peripherals(payload: dict[str, Any]) -> list[dict[str, Any]]:
     src = payload.get("peripherals") or []
     interrupts = payload.get("interrupts") or []
+    pin_options_idx = _build_pin_options_index(payload)
+    cal_rows  = payload.get("adc_calibration_data_points") or []
+    cal_ctx   = payload.get("adc_calibration_context") or {}
+    ext_trigs = payload.get("adc_external_triggers") or []
+    int_chans = payload.get("adc_internal_channels") or []
+    timing_rows = payload.get("i2c_timing_presets") or []
+    max_clock_overrides = _build_max_clock_overrides(
+        payload.get("peripheral_max_clock_hz") or []
+    )
 
     # peripheral_name -> [irq_entries]
     irq_by_per: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -512,6 +810,26 @@ def _convert_peripherals(payload: dict[str, Any]) -> list[dict[str, Any]]:
         irqs = irq_by_per.get(per_name)
         if irqs:
             entry["irq"] = irqs[0] if len(irqs) == 1 else irqs
+        if per_name in pin_options_idx:
+            entry["pin_options"] = dict(pin_options_idx[per_name])
+        if per_name in max_clock_overrides:
+            entry["max_clock_override"] = max_clock_overrides[per_name]
+        # ADC-specific extensions.
+        if ip_name == "adc" or "adc" in (per_name or "").lower():
+            cal = _build_calibration_block(cal_rows, cal_ctx, per_name)
+            if cal:
+                entry["calibration"] = cal
+            ext = _build_external_triggers(ext_trigs, per_name)
+            if ext:
+                entry["external_triggers"] = ext
+            chans = _build_internal_channels(int_chans, per_name)
+            if chans:
+                entry["channels"] = chans
+        # I²C-specific.
+        if ip_name == "i2c" or (per_name or "").upper().startswith("I2C"):
+            tp = _build_timing_presets(timing_rows, per_name)
+            if tp:
+                entry["timing_presets"] = tp
         out.append(entry)
     return out
 
@@ -539,6 +857,42 @@ def _convert_pinout(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if bonded and isinstance(position, int) and position >= 1:
             pad_pos[bonded] = position
 
+    # pin_constraints: { pin_name -> [constraint_kind, …] }
+    constraint_map: dict[str, list[str]] = defaultdict(list)
+    constraint_translation = {
+        "analog-only": "analog-only",
+        "analog_only": "analog-only",
+        "analog-capable": "analog-capable",
+        "analog_capable": "analog-capable",
+        "input-only": "input-only",
+        "input_only":  "input-only",
+        "5v-tolerant": "low-drive",   # closest match in v2.1's enum
+        "ft":          "low-drive",   # 5V-tolerant flag in v1 STM32
+        "boot":        "boot",
+        "reset":       "reset",
+        "rtc":         "rtc",
+        "strapping":   "strapping",
+        "flash-reserved": "flash-reserved",
+        "lfxo-bond":   "lfxo-bond",
+        "nfc-default": "nfc-default",
+        "debug-default": "debug-default",
+        "module-reserved": "module-reserved",
+        "power":       "power",
+        "oscillator":  "oscillator",
+        "chip-enable": "chip-enable",
+        "low-drive":   "low-drive",
+    }
+    for c in payload.get("pin_constraints") or []:
+        if not isinstance(c, dict):
+            continue
+        pin_name = c.get("pin")
+        kind = c.get("kind")
+        if not (pin_name and kind):
+            continue
+        v2_kind = constraint_translation.get(kind.lower())
+        if v2_kind:
+            constraint_map[pin_name].append(v2_kind)
+
     out: list[dict[str, Any]] = []
     for pin in pins:
         if not isinstance(pin, dict):
@@ -549,6 +903,14 @@ def _convert_pinout(payload: dict[str, Any]) -> list[dict[str, Any]]:
         entry: dict[str, Any] = {"signal": name}
         if name in pad_pos:
             entry["pin"] = pad_pos[name]
+        if name in constraint_map:
+            # de-dup while preserving order
+            seen = set()
+            uniq = []
+            for c in constraint_map[name]:
+                if c not in seen:
+                    uniq.append(c); seen.add(c)
+            entry["constraints"] = uniq
         out.append(entry)
     return out
 
