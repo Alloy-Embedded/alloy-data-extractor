@@ -177,17 +177,63 @@ def _device_id_from_xml(xml_name: str) -> str:
     return stem.lower()
 
 
-def _resolve_svd_for_xml(xml_name: str, family: str) -> str | None:
-    """Find the SVD basename whose prefix matches the open-pin-data XML."""
+def _resolve_svd_for_xml(
+    xml_name: str, family: str, svd_dir: Path | None = None,
+) -> str | None:
+    """Find the SVD basename whose prefix matches the open-pin-data XML.
+
+    Two-pass resolver:
+
+    1. Try the hand-curated _FAMILY_TO_SVD_PREFIXES list (exact
+       prefix match → ``<prefix>.svd``).
+    2. If miss + ``svd_dir`` given, scan the directory and pick the
+       longest SVD stem whose prefix matches the chip's XML name.
+       This handles the real-world naming: ``STM32G4`` SVDs are
+       ``STM32G431xx.svd``, ``STM32G473xx.svd`` etc.; ``STM32H7``
+       has chip-specific SVDs (``STM32H723x.svd``) plus shared
+       ones (``STM32H7x3.svd`` covers H723/H725/H730/H733/H735);
+       ``STM32F1`` adds an ``xx`` suffix on every silicon line
+       (``STM32F103xx.svd``).
+    """
     upper = xml_name.upper()
-    for prefix in _FAMILY_TO_SVD_PREFIXES.get(family, ()):
-        if upper.startswith(prefix):
-            return f"{prefix}.svd"
+
+    # Pass 1: hand-curated prefixes — try with and without the
+    # common ``xx`` / ``x`` SVD suffixes.  Verify the file exists
+    # so we don't return a phantom name.
+    if svd_dir is not None and svd_dir.is_dir():
+        for prefix in _FAMILY_TO_SVD_PREFIXES.get(family, ()):
+            if not upper.startswith(prefix):
+                continue
+            for suffix in ("", "xx", "x"):
+                candidate = f"{prefix}{suffix}.svd"
+                if (svd_dir / candidate).is_file():
+                    return candidate
+
+    # Pass 2: scan the SVD directory and pick the longest stem
+    # that's a prefix of the chip's XML.
+    if svd_dir is not None and svd_dir.is_dir():
+        candidates: list[tuple[int, str]] = []
+        for svd in svd_dir.glob("STM32*.svd"):
+            stem = svd.stem.upper()
+            # Strip trailing ``xx`` / ``x`` so STM32G431xx → STM32G431.
+            for trailing in ("XX", "X"):
+                if stem.endswith(trailing):
+                    base = stem[: -len(trailing)]
+                    if upper.startswith(base):
+                        candidates.append((len(base), svd.name))
+                        break
+            else:
+                if upper.startswith(stem):
+                    candidates.append((len(stem), svd.name))
+        if candidates:
+            candidates.sort(reverse=True)   # longest match wins
+            return candidates[0][1]
+
     return None
 
 
 def _discover_family_chips(
-    family: str, open_pin_dir: Path,
+    family: str, open_pin_dir: Path, svd_dir: Path | None = None,
 ) -> tuple[_ChipSources, ...]:
     """Return one _ChipSources per open-pin-data XML in ``family``."""
     out: list[_ChipSources] = []
@@ -195,7 +241,7 @@ def _discover_family_chips(
         for xml in sorted(open_pin_dir.glob(f"{prefix}*.xml")):
             name = xml.name
             device = _device_id_from_xml(name)
-            svd = _resolve_svd_for_xml(name, family)
+            svd = _resolve_svd_for_xml(name, family, svd_dir=svd_dir)
             if svd is None:
                 continue
             out.append(_ChipSources(
@@ -335,7 +381,9 @@ def main(argv: list[str] | None = None) -> int:
         if not args.family:
             print("ERROR: --discover requires --family", file=sys.stderr)
             return 2
-        matches = _discover_family_chips(args.family, args.open_pin_data_dir)
+        matches = _discover_family_chips(
+            args.family, args.open_pin_data_dir, svd_dir=args.svd_dir,
+        )
         if not matches:
             print(f"ERROR: no open-pin-data XMLs found for family "
                   f"{args.family!r} under {args.open_pin_data_dir}",
