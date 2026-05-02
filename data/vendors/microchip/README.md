@@ -42,7 +42,26 @@ the auto-extracted memory map.
 | samv70   | 6  | Cortex-M7F    | atdf + csp + overlay  | yes |
 | samv71   | 9  | Cortex-M7F    | atdf + csp + overlay  | yes |
 
-**29 families · 264 chips** (counts from `vendors/microchip/`).
+**29 families · 264 chips** (SAM/AVR-DA only).
+
+## Full coverage (post-PIC integration)
+
+| Architecture | Families | Chips | Sources | Schema |
+| --- | --- | --- | --- | --- |
+| ARM Cortex-M (SAM, PIC32C, AVR-DA) | 51 | 326 | atdf + overlay [+ csp] | ATDF |
+| MIPS (PIC32MX) | 1 | 120 | atdf + overlay | ATDF |
+| AVR 8-bit (ATmega/ATtiny/ATautomotive) | 3 | 229 | atdf + overlay | ATDF |
+| PIC8 (PIC16/PIC18/MCP/MCV) | 6 | 605 | pic + overlay | EDC `.PIC` |
+| PIC24 | 7 | 247 | pic + overlay | EDC `.PIC` |
+| dsPIC | 14 | (counts in `vendors/`) | pic + overlay | EDC `.PIC` |
+| Other Microchip MCUs (CEC/EEC/HCS/MEC/DEC/LAN9) | 4+ | (counts in `vendors/`) | atdf or pic + overlay | mixed |
+| **Grand total** | **63** | **2396 chips** | | |
+
+CSP enrichment (`microchip-csp` source = auto-derived
+`clock.domains[].select_register` from Harmony's `clk.py` +
+ATDF value-groups) is active for **15 ARM families**:
+samc20, samc21, samd09–samd21, samd51, same51/53/54, same70,
+saml21, saml22, sams70, samv70, samv71.
 
 ## Refreshing
 
