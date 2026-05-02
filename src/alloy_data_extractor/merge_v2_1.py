@@ -406,7 +406,7 @@ STM32_MERGE_POLICY = MergePolicy(
         "ip_version":         ("stm32-open-pin-data", "stm32-cubemx", "cmsis-svd"),
         "pin_options":        ("stm32-open-pin-data", "stm32-cubemx"),
         "calibration":        ("stm32-overlay",),
-        "external_triggers":  ("stm32-cubemx", "stm32-overlay"),
+        "external_triggers":  ("stm32-tier", "stm32-cubemx", "stm32-overlay"),
         "timing_presets":     ("stm32-overlay",),
         "channels":           ("stm32-cubemx", "stm32-overlay"),
         "dma":                ("stm32-cubemx", "modm-devices"),
