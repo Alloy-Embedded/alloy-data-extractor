@@ -124,7 +124,16 @@ def extract_device(
         if upper_name.startswith("VBAT"):
             constraints.append("power")
         if constraints:
-            row["constraints"] = constraints
+            # Schema requires uniqueItems on constraints; some pins
+            # match multiple constraint heuristics (VBAT is power +
+            # power, etc.) — dedupe while preserving declaration order.
+            seen: set[str] = set()
+            deduped: list[str] = []
+            for c in constraints:
+                if c not in seen:
+                    seen.add(c)
+                    deduped.append(c)
+            row["constraints"] = deduped
         pinout_rows.append(row)
 
         # Walk the signals declared on this pin.
