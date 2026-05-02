@@ -1,0 +1,88 @@
+# AVR-DA family overlay — hand-curated facts that no upstream
+# source publishes uniformly.
+#
+# Sourced from:
+#   * AVR128DA28/32/48/64 Datasheet DS40002183
+#   * AVR-DA Family Reference Manual (Microchip TB3225)
+#   * Per-chip ATDF (atdf/AVR128DA32.atdf etc.)
+#
+# TEMPSENSE0/1 calibration ROM lives at SIGROW base + offset; for
+# AVR-DA SIGROW base = 0x1100 + 3 (signature bytes precede), so
+# TEMPSENSE0 = 0x1107 (16-bit, sigma_T) and TEMPSENSE1 = 0x1109
+# (16-bit, T_offset).  Conversion model differs from STM32's two-
+# point cal (described in v2.1 schema follow-up — for now the
+# overlay only surfaces max_clocks + profiles).
+
+# ---------------------------------------------------------------------------
+# Peripheral max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+# DS §41.4 — ADC0 max sample clock = CLK_ADC max.
+max_clock_hz = 1_500_000
+
+[uart]
+# Datasheet §32.3.7 — USART baud rate max at f_OSC = 24 MHz.
+max_baud_hz = 1_500_000
+
+[spi]
+# DS §35.4 — SPI clock max = f_CLK_PER / 2.  At 24 MHz f_CLK_PER:
+max_clock_hz = 12_000_000
+
+[i2c]
+# DS §36.4.5 — TWI / I²C max = 1 MHz (Fast-Mode Plus).
+max_clock_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (shared across the family — overrides per-device
+# in `devices/<chip>.toml` if needed).
+# ---------------------------------------------------------------------------
+# AVR Harvard architecture: program (Flash) and data (SRAM) live
+# in independent address spaces.  ATDF already carries them; the
+# overlay re-asserts them so the merge engine has a top-level row
+# even when the SVD/ATDF primary skipped one.
+
+[[memories]]
+name = "FLASH"
+kind = "flash"
+base_address = 0
+size_bytes = 131072    # 128 KB max — overridable per-device
+access = "rx"
+address_space = "code"
+
+[[memories]]
+name = "SRAM"
+kind = "sram"
+base_address = 0x4000
+size_bytes = 16384     # 16 KB max — overridable per-device
+access = "rw"
+address_space = "data"
+
+# ---------------------------------------------------------------------------
+# System clock profiles
+# ---------------------------------------------------------------------------
+# AVR-DA boots from the internal high-frequency oscillator
+# (OSCHF) at 4 MHz divided by 1, so the post-reset CPU clock is
+# 4 MHz.  Two recommended profiles cover 90% of dev workflows:
+# the factory state and the maximum supported (24 MHz).
+
+[system_clock.post_reset_profile]
+name = "factory-oschf-4mhz"
+sysclk_hz = 4_000_000
+hclk_hz = 4_000_000
+pclk_hz = 4_000_000
+source = "OSCHF"
+
+[[system_clock.recommended_profiles]]
+name = "oschf-24mhz-max"
+sysclk_hz = 24_000_000
+hclk_hz = 24_000_000
+pclk_hz = 24_000_000
+source = "OSCHF"
+
+[[system_clock.recommended_profiles]]
+name = "external-clock-24mhz"
+sysclk_hz = 24_000_000
+hclk_hz = 24_000_000
+pclk_hz = 24_000_000
+source = "EXTCLK"

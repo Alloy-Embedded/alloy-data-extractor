@@ -470,7 +470,31 @@ STM32_MERGE_POLICY = MergePolicy(
 )
 
 
+MICROCHIP_MERGE_POLICY = MergePolicy(
+    name="microchip",
+    primary_source="microchip-atdf",
+    section_priorities={
+        "memory":             ("microchip-overlay", "microchip-atdf"),
+        "pinout":             ("microchip-atdf",),
+        "interrupts":         ("microchip-atdf",),
+        # Clock has the same sub-section split as STM32 — overlay
+        # owns profiles, ATDF owns whatever clock topology it
+        # exposes (which is usually nothing — AVR doesn't model
+        # clock-tree muxes the way ARM does).
+        "clock.oscillators":  ("microchip-overlay", "microchip-atdf"),
+        "clock.domains":      ("microchip-overlay", "microchip-atdf"),
+        "clock.profiles":     ("microchip-overlay",),
+        "clock.reset_state":  ("microchip-overlay", "microchip-atdf"),
+    },
+    template_field_priorities={
+        "max_clock":          ("microchip-overlay",),
+        "max_baud":           ("microchip-overlay",),
+    },
+)
+
+
 __all__ = [
+    "MICROCHIP_MERGE_POLICY",
     "MergePolicy",
     "MergeResult",
     "STM32_MERGE_POLICY",

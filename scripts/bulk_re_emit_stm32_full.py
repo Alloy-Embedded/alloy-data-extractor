@@ -329,9 +329,17 @@ def main(argv: list[str] | None = None) -> int:
               "Skipping cubemx enrichment.", file=sys.stderr)
 
     failures = 0
+    skipped_no_svd = 0
     print(f"Re-emitting {len(matches)} chip(s) into {args.out}")
     print()
     for chip in matches:
+        # Pre-flight: skip silently when the SVD isn't shipped with
+        # this cmsis-svd-data version (F415/F417/F423/F437/F439/F479
+        # land in newer packs).  Better than failing every variant.
+        svd_path = args.svd_dir / chip.svd
+        if not svd_path.is_file():
+            skipped_no_svd += 1
+            continue
         try:
             out_path, sources = _re_emit_one(
                 chip=chip,
@@ -343,9 +351,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             size = out_path.stat().st_size
             sources_str = " + ".join(sources)
-            print(f"  ✓ {chip.device:14s} → {out_path.relative_to(args.out)} "
+            print(f"  ✓ {chip.device:18s} → {out_path.relative_to(args.out)} "
                   f"({size:>7,}B)")
-            print(f"    sources: {sources_str}")
         except Exception as exc:  # noqa: BLE001
             failures += 1
             print(f"  ✗ {chip.device}: {type(exc).__name__}: {exc}")
@@ -353,7 +360,9 @@ def main(argv: list[str] | None = None) -> int:
             traceback.print_exc()
 
     print()
-    print(f"{len(matches) - failures}/{len(matches)} chips re-emitted.")
+    emitted = len(matches) - failures - skipped_no_svd
+    print(f"{emitted}/{len(matches)} chips re-emitted; "
+          f"{skipped_no_svd} skipped (SVD missing); {failures} failed")
     return 1 if failures else 0
 
 

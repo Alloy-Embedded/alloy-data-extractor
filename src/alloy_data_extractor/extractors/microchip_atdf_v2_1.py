@@ -402,6 +402,55 @@ def _detect_package(root: ET.Element) -> str | None:
     return pkg
 
 
+def _extract_pinout(root: ET.Element) -> list[dict[str, Any]]:
+    """Extract per-package pinout from the ATDF's ``<pinouts><pinout
+    name="<package>"><pin pad="..." position="..."/></pinout></pinouts>``
+    block.  Picks the pinout matching the variant's declared package
+    (when ``<variant pinout="QFN32"/>``); falls back to the first
+    <pinout> when no match.
+
+    Returns a v2.1 pinout[] list ready to drop into the payload.
+    """
+    variant = root.find(".//variants/variant")
+    desired_pinout = _attr(variant, "pinout") if variant is not None else ""
+
+    chosen: ET.Element | None = None
+    for pn in root.iter("pinout"):
+        name = _attr(pn, "name")
+        if not desired_pinout or name == desired_pinout:
+            chosen = pn
+            break
+    if chosen is None:
+        # No pinout block at all — emit a placeholder so the schema
+        # is satisfied (downstream extractors can overwrite).
+        return [{"signal": "RESET"}]
+
+    out: list[dict[str, Any]] = []
+    for pin in chosen.iter("pin"):
+        pad = _attr(pin, "pad")
+        position = _parse_int(_attr(pin, "position"))
+        if not pad:
+            continue
+        row: dict[str, Any] = {"signal": pad}
+        if position is not None and position >= 1:
+            row["pin"] = position
+        # Pin-constraint heuristics — same vocabulary as STM32.
+        upper = pad.upper()
+        constraints: list[str] = []
+        if upper in {"VDD", "VDDIO", "VDDA", "AVDD"} or upper.startswith("VDD"):
+            constraints.append("power")
+        elif upper in {"GND", "AGND", "VSS"} or upper.startswith("GND"):
+            constraints.append("power")
+        elif upper == "UPDI":
+            constraints.append("debug-default")
+        elif upper in {"RESET", "NRESET"}:
+            constraints.append("reset")
+        if constraints:
+            row["constraints"] = constraints
+        out.append(row)
+    return out or [{"signal": "RESET"}]
+
+
 # ---------------------------------------------------------------------------
 # Public entry-point
 # ---------------------------------------------------------------------------
@@ -439,10 +488,10 @@ def extract_device(
             "access": "rx", "role": "extractor-placeholder",
         }]
 
-    # ATDF doesn't carry pinout per package directly — the per-pin
-    # alt-function tables live in the included ``hwtools/`` headers.
-    # Emit a placeholder; downstream enrichment fills it in.
-    pinout: list[dict[str, Any]] = [{"signal": "RESET"}]
+    # ATDF carries package pinout under ``<pinouts><pinout name="X">
+    # <pin pad="..." position="..."/></pinout></pinouts>``.  We pick
+    # the pinout that matches the variant's declared package.
+    pinout: list[dict[str, Any]] = _extract_pinout(root)
 
     payload: dict[str, Any] = {
         "schema":     "alloy.device.v2.1",
