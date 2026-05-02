@@ -153,10 +153,20 @@ def _hex_addr(value: int | None) -> int | str | None:
 
 def _detect_address_space(region: dict[str, Any], vendor: str) -> str | None:
     """Heuristic: AVR memories carry an explicit ``address_space``;
-    other vendors keep their conventional flat layout."""
+    other vendors keep their conventional flat layout.
+
+    v1.5 introduced spurious values (``code`` / ``data`` aliases that
+    really mean "ROM/RAM in a flat 32-bit space" — those don't fit
+    the v2.1 closed enum, which is for Harvard / OTP / signature
+    spaces.  Drop them: the flat-space chip is communicated via
+    ``alias: code`` instead.
+    """
     raw = region.get("address_space")
     if isinstance(raw, str):
-        return _ADDRESS_SPACE_NORMALISE.get(raw.lower(), raw.lower())
+        normalised = _ADDRESS_SPACE_NORMALISE.get(raw.lower())
+        if normalised is None:
+            return None
+        return normalised
     role = (region.get("role") or "").lower()
     if "rom" in role and "data" in role:
         return "data"
