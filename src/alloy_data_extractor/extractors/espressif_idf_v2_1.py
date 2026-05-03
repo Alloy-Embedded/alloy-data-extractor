@@ -139,32 +139,48 @@ def _parse_signals(
             base = name
             direction = "bidi"
 
-        # Resolve peripheral by longest match.
-        per = _resolve_peripheral(base, known_peripherals)
-        if per is None:
+        # Resolve (peripheral, signal_token) — handles both direct
+        # SVD-prefix matches and Espressif shorthand normalisation.
+        resolved = _resolve_peripheral(base, known_peripherals)
+        if resolved is None:
             continue
-        # Signal = base with peripheral prefix stripped.
-        if base.startswith(per + "_"):
-            signal_token = base[len(per) + 1:]
-        else:
-            # Peripheral was a substring inside base (rare).
-            signal_token = base
+        per, signal_token = resolved
+        if not signal_token:
+            signal_token = "main"
 
-        # Tag direction in signal key.
-        signal_key = f"{signal_token}_{direction}".lower()
-        # Don't emit duplicate (peripheral, signal) pairs — first
-        # win.  The header occasionally redefines aliases.
+        # Tag direction in signal key (e.g. rxd_in, sck_out).
+        signal_key = f"{signal_token}_{direction}".lower().lstrip("_")
+        # First-win on duplicates (header occasionally redefines aliases).
         bucket[per.lower()].setdefault(signal_key, idx)
     return {p: dict(s) for p, s in bucket.items()}
 
 
 def _resolve_peripheral(
     base: str, known_peripherals: set[str],
-) -> str | None:
-    """Find the longest peripheral name in ``known_peripherals``
-    that prefixes (or appears as a token in) ``base``."""
+) -> tuple[str, str] | None:
+    """Resolve a GPIO matrix signal stem (``"U0RXD"``, ``"I2CEXT0_SCL"``,
+    ``"HSPICLK"``, …) into ``(peripheral, signal_token)`` against the
+    SVD peripheral name set.
+
+    Espressif's signal-name convention has many shorthand forms
+    that don't directly match SVD peripheral names:
+
+      * ``U<n>RXD``       → ``UART<n>.rxd``        (UART)
+      * ``I2CEXT<n>_SCL`` → ``I2C<n>.scl``         (I²C; "EXT" disambiguates from RTC_I2C)
+      * ``I2S<n>I_BCK``   → ``I2S<n>.i_bck``       (I²S input direction)
+      * ``I2S<n>O_BCK``   → ``I2S<n>.o_bck``
+      * ``SPICLK``        → ``SPI1.clk``           (the SPI flash bus)
+      * ``HSPICLK``       → ``SPI2.clk``           (HSPI is ESP32-classic alias for SPI2)
+      * ``VSPICLK``       → ``SPI3.clk``           (VSPI is ESP32-classic alias for SPI3)
+      * ``CAN_TX``        → ``TWAI0.tx``           (CAN renamed TWAI in newer chips)
+      * ``RMT_SIG_<n>``   → ``RMT.sig_<n>``        (RMT channels)
+
+    Returns ``None`` when no peripheral can be matched.
+    """
     parts = base.split("_")
     n = len(parts)
+
+    # 1. Direct longest-prefix match against the SVD set.
     best: str | None = None
     best_len = 0
     for end in range(n, 0, -1):
@@ -172,15 +188,68 @@ def _resolve_peripheral(
         if candidate in known_peripherals and end > best_len:
             best = candidate
             best_len = end
-    # Also try common Espressif single-token shortenings.
-    # SPI peripherals show up as "SPI", "SPI2", "SPI3"; UARTs
-    # as "U0", "U1", "U2".  Normalise to the SVD names.
-    if best is None:
-        # Map Espressif U<n> shorthand to UART<n>.
-        m = re.match(r"^U(\d+)$", base.split("_", 1)[0])
-        if m and f"UART{m.group(1)}" in known_peripherals:
-            return f"UART{m.group(1)}"
-    return best
+    if best is not None:
+        signal = "_".join(parts[best_len:])
+        return best, signal
+
+    # 2. Espressif shorthand normalisation.
+    first = parts[0]
+
+    # U<n>SIG → UART<n>.sig  (e.g. U0RXD → UART0.RXD)
+    m = re.match(r"^U(\d+)([A-Z]+)$", first)
+    if m:
+        target = f"UART{m.group(1)}"
+        if target in known_peripherals:
+            sig_tail = "_".join([m.group(2), *parts[1:]])
+            return target, sig_tail.strip("_")
+
+    # I2CEXT<n>_SIG → I2C<n>.sig  (e.g. I2CEXT0_SCL → I2C0.SCL)
+    m = re.match(r"^I2CEXT(\d+)$", first)
+    if m:
+        target = f"I2C{m.group(1)}"
+        if target in known_peripherals:
+            return target, "_".join(parts[1:])
+
+    # I2S<n><dir> → I2S<n>.<dir>_<sig>  where dir = I (input) or O (output).
+    # E.g. I2S0I_BCK → I2S0.I_BCK; I2S0O_WS → I2S0.O_WS.
+    m = re.match(r"^I2S(\d+)([IO])$", first)
+    if m:
+        target = f"I2S{m.group(1)}"
+        if target in known_peripherals:
+            sig_tail = "_".join([m.group(2), *parts[1:]])
+            return target, sig_tail
+
+    # SPICLK / SPID / SPIQ / SPICS<n> / SPIHD / SPIWP → SPI1
+    # (the master SPI flash interface on ESP32 classic).
+    m = re.match(r"^SPI([A-Z][A-Z0-9]*)$", first)
+    if m and "SPI1" in known_peripherals:
+        return "SPI1", m.group(1)
+
+    # HSPI* → SPI2; VSPI* → SPI3 (ESP32-classic peripheral aliases).
+    m = re.match(r"^HSPI([A-Z][A-Z0-9]*)$", first)
+    if m and "SPI2" in known_peripherals:
+        return "SPI2", m.group(1)
+    m = re.match(r"^VSPI([A-Z][A-Z0-9]*)$", first)
+    if m and "SPI3" in known_peripherals:
+        return "SPI3", m.group(1)
+
+    # FSPI* (newer chips: ESP32-S2/S3/C3/C6) → SPI2.
+    m = re.match(r"^FSPI([A-Z][A-Z0-9]*)$", first)
+    if m and "SPI2" in known_peripherals:
+        return "SPI2", m.group(1)
+
+    # CAN_TX → TWAI0.tx (legacy "CAN" → modern "TWAI").
+    if first == "CAN" and "TWAI0" in known_peripherals:
+        return "TWAI0", "_".join(parts[1:])
+
+    # PWM<n>_<sig> → MCPWM<n>.sig  (motor-control PWM).
+    m = re.match(r"^PWM(\d+)$", first)
+    if m:
+        target = f"MCPWM{m.group(1)}"
+        if target in known_peripherals:
+            return target, "_".join(parts[1:])
+
+    return None
 
 
 # -----------------------------------------------------------------
