@@ -501,6 +501,41 @@ MICROCHIP_MERGE_POLICY = MergePolicy(
 )
 
 
+ESPRESSIF_MERGE_POLICY = MergePolicy(
+    name="espressif",
+    primary_source="espressif-svd",
+    section_priorities={
+        # Memory + clock + pinout default to overlay-owned —
+        # Espressif CMSIS-SVD doesn't carry a memory map, and
+        # the chip-level clock topology (RC_FAST / XTAL / PLL_CPU
+        # graph) lives in the family TOML.
+        "memory":             ("espressif-overlay", "espressif-svd"),
+        "pinout":             ("espressif-overlay", "espressif-svd"),
+        "interrupts":         ("espressif-svd",),
+        "clock.oscillators":  ("espressif-overlay", "espressif-svd"),
+        "clock.domains":      ("espressif-overlay", "espressif-svd"),
+        "clock.profiles":     ("espressif-overlay",),
+        # Frente C extras — wireless + power_domains live only
+        # in the overlay (ESP32 SVD doesn't model them).
+        "wireless":           ("espressif-overlay",),
+        "power_domains":      ("espressif-overlay",),
+        # Frente B — hardware caps + GPIO matrix come from
+        # ESP-IDF source.  The IDF extractor returns them at the
+        # root (hardware_caps) and as peripherals[*] enrichment
+        # with gpio_matrix_signals.
+        "hardware_caps":      ("espressif-idf",),
+    },
+    peripheral_field_priorities={
+        # GPIO matrix signal IDs from ESP-IDF gpio_sig_map.h.
+        "gpio_matrix_signals": ("espressif-idf",),
+    },
+    template_field_priorities={
+        "max_clock":          ("espressif-overlay",),
+        "max_baud":           ("espressif-overlay",),
+    },
+)
+
+
 NXP_MERGE_POLICY = MergePolicy(
     name="nxp",
     primary_source="cmsis-svd",
@@ -532,6 +567,7 @@ NXP_MERGE_POLICY = MergePolicy(
 
 
 __all__ = [
+    "ESPRESSIF_MERGE_POLICY",
     "MICROCHIP_MERGE_POLICY",
     "MergePolicy",
     "MergeResult",

@@ -1,0 +1,127 @@
+# ESP32-C3 family overlay — RV32IMC single-core SoC, Wi-Fi + BLE 5.0.
+#
+# Sourced from ESP32-C3 TRM rev 1.0, Datasheet v1.6.
+
+description = "Espressif ESP32-C3 single-core RISC-V (RV32IMC) Wi-Fi + BLE 5.0"
+package     = "qfn32"
+
+[adc]
+max_clock_hz = 5_000_000
+[uart]
+max_baud_hz = 5_000_000
+[spi]
+max_clock_hz = 60_000_000
+[i2c]
+max_clock_hz = 800_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+[[i2c.speed_options]]
+name = "fast_plus_800k"
+speed_hz = 800_000
+
+[[memories]]
+name = "ROM"
+base_address = 0x40000000
+size_bytes = 393216           # 384 KB internal ROM
+access = "rx"
+role = "boot-rom"
+
+[[memories]]
+name = "SRAM"
+base_address = 0x3FC80000
+size_bytes = 409600           # 400 KB unified SRAM
+access = "rwx"
+
+[[memories]]
+name = "RTC_FAST_RAM"
+base_address = 0x50000000
+size_bytes = 8192
+access = "rwx"
+role = "rtc-fast"
+
+[[memories]]
+name = "DROM"
+base_address = 0x3C000000
+size_bytes = 8388608          # 8 MB external Flash mapped read
+access = "ro"
+role = "xip-flash-data"
+
+[[memories]]
+name = "IROM"
+base_address = 0x42000000
+size_bytes = 8388608
+access = "rx"
+role = "xip-flash-exec"
+
+[system_clock.oscillators.xtal]
+freq_hz = 40_000_000
+kind = "crystal-external"
+[system_clock.oscillators.rc_fast]
+freq_hz = 17_500_000
+kind = "rc-internal"
+[system_clock.oscillators.rc_slow]
+freq_hz = 150_000
+kind = "rc-internal"
+[system_clock.oscillators.pll_cpu]
+freq_hz = 480_000_000
+kind = "synthesised"
+
+[[system_clock.domains]]
+id = "sysclk"
+sources = ["xtal", "rc_fast", "pll_cpu"]
+[[system_clock.domains]]
+id = "rtc_slow_clk"
+sources = ["rc_slow"]
+
+[system_clock.post_reset_profile]
+name = "post-reset-rc-fast-17mhz"
+sysclk_hz = 17_500_000
+hclk_hz = 17_500_000
+pclk_hz = 17_500_000
+source = "rc_fast"
+
+[[system_clock.recommended_profiles]]
+name = "xtal-40mhz"
+sysclk_hz = 40_000_000
+hclk_hz = 40_000_000
+pclk_hz = 40_000_000
+source = "xtal"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-80mhz"
+sysclk_hz = 80_000_000
+hclk_hz = 80_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-160mhz-max"
+sysclk_hz = 160_000_000
+hclk_hz = 160_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+[wireless.wifi]
+standards = ["b", "g", "n"]
+band_ghz = [2.4]
+
+[wireless.bluetooth]
+version = "5.0"
+profiles = ["le"]
+
+[[power_domains]]
+id = "active"
+[[power_domains]]
+id = "modem-sleep"
+[[power_domains]]
+id = "light-sleep"
+[[power_domains]]
+id = "deep-sleep"
+peripherals = ["rtc_gpio", "rtc_cntl"]
+
+strapping_pins = ["GPIO2", "GPIO8", "GPIO9"]

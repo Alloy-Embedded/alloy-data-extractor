@@ -92,12 +92,46 @@ _CORE_ISA = {
 
 def _normalise_core(svd_name: str) -> tuple[str, str, int, bool]:
     """Return ``(isa, name, bits, fpu)`` from a SVD ``<cpu><name>``
-    string like ``"CM4"`` or ``"CM4F"``."""
-    n = (svd_name or "").strip().lower()
-    isa = _CORE_ISA.get(n, "armv7-m" if n.startswith("cm") else "unknown")
-    bits = _CORE_BITS.get(n, 32)
-    fpu = n.endswith("f")
-    return isa, n if n else "unknown", bits, fpu
+    string.
+
+    Recognised:
+      * ARM Cortex-M:  "CM0", "CM4", "CM7F", … → armv6-m / armv7-m / armv7e-m / armv8-m
+      * Xtensa:        "Xtensa LX6", "Xtensa LX7" → xtensa LX-named
+      * RISC-V:        "RV32IMC", "RV32IMAC", "RV32IMAFC", … → riscv ISA name
+    Falls back to ARM Cortex-M heuristic for unknown "cm*" prefixes
+    (matches modm-devices behaviour) and "unknown" for everything else.
+    """
+    raw = (svd_name or "").strip()
+    n = raw.lower()
+    if not n:
+        return "unknown", "unknown", 32, False
+
+    # ARM Cortex-M short forms ("CM4F", "CM7", …).
+    if n in _CORE_ISA:
+        return _CORE_ISA[n], n, _CORE_BITS.get(n, 32), n.endswith("f")
+    if n.startswith("cm"):
+        # Unknown "cm<x>" — fall back to ARMv7-M.
+        return "armv7-m", n, 32, n.endswith("f")
+
+    # Xtensa: "Xtensa LX6" / "Xtensa LX7" (Espressif ESP32 classic / S2 / S3 / P4 LP).
+    if "xtensa" in n:
+        # Slug the variant: "xtensa lx6" → "xtensa-lx6".
+        slug = n.replace(" ", "-")
+        return "xtensa", slug, 32, True   # ESP32 Xtensa LX6/LX7 ship with FPU
+
+    # RISC-V: "RV32IMC", "RV32IMAC", "RV32IMAFC" (Espressif ESP32-C2/C3/C6/H2/P4).
+    if n.startswith("rv"):
+        # bits — RV32 = 32, RV64 = 64 (no production MCU yet but future-proof).
+        bits = 64 if n.startswith("rv64") else 32
+        # fpu — present when 'f' or 'd' appears in the ISA letters
+        # (after the rv32/rv64 prefix).
+        suffix = n[4:] if len(n) >= 4 else ""
+        fpu = "f" in suffix or "d" in suffix
+        return "riscv", n, bits, fpu
+
+    # Unknown architecture — preserve verbatim so downstream tools
+    # can still match on the raw string.
+    return n, n, 32, False
 
 
 _REG_ACCESS_MAP = {
@@ -388,7 +422,10 @@ def extract_device(
         core_block["mpu"] = True
     if irq_count is not None:
         core_block["interrupt_lines"] = irq_count
-    if nvic_priority_bits is not None:
+    # nvic_priority_bits is only meaningful for ARM cores — Xtensa
+    # and RISC-V SVDs from Espressif always emit `<nvicPrioBits>0`
+    # which is misleading.  Suppress for non-ARM.
+    if nvic_priority_bits is not None and isa.startswith("arm"):
         core_block["nvic_priority_bits"] = nvic_priority_bits
 
     identity_block: dict[str, Any] = {

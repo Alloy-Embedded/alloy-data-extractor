@@ -50,6 +50,16 @@ from alloy_data_extractor.emit.canonical_yaml import write_device_yaml  # noqa: 
 from alloy_data_extractor.extractors.cmsis_svd_v2_1 import (  # noqa: E402
     extract_device as svd_extract,
 )
+from alloy_data_extractor.extractors.espressif_idf_v2_1 import (  # noqa: E402
+    extract_device as idf_extract,
+)
+from alloy_data_extractor.extractors.espressif_overlay_v2_1 import (  # noqa: E402
+    extract_device as overlay_extract,
+)
+from alloy_data_extractor.merge_v2_1 import (  # noqa: E402
+    ESPRESSIF_MERGE_POLICY,
+    merge_payloads,
+)
 
 
 _COPROCESSOR_RX = re.compile(r"^(?P<parent>esp32[a-z0-9]+)-(?P<sub>ulp|lp)$")
@@ -69,31 +79,79 @@ def _family_slug(device_id: str) -> str:
     return device_id
 
 
+def _known_peripherals_from_payload(payload: dict) -> set[str]:
+    out: set[str] = set()
+    for p in payload.get("peripherals", []):
+        pid = p.get("id")
+        if isinstance(pid, str) and pid:
+            out.add(pid.upper())
+    return out
+
+
 def _re_emit_one(
     *,
     svd_path: Path,
+    overlay_root: Path,
+    idf_root: Path | None,
     output_root: Path,
     force: bool,
-) -> tuple[Path | None, str, bool]:
-    """Returns ``(out_path, family, was_written)``.  Returns
-    ``out_path=None`` when the existing file is preserved and
-    ``--force`` wasn't supplied."""
+) -> tuple[Path | None, str, bool, list[str]]:
+    """Returns ``(out_path, family, was_written, sources_used)``.
+    Returns ``out_path=None`` when the existing file is preserved
+    and ``--force`` wasn't supplied."""
     device = _device_id(svd_path.stem)
     family = _family_slug(device)
     target = (
         output_root / "vendors" / "espressif" / family / "devices" / f"{device}.yml"
     )
     if target.exists() and not force:
-        return target, family, False
+        return target, family, False, ["preserved"]
 
-    payload = svd_extract(
+    primary = svd_extract(
         vendor="espressif", family=family, device=device, svd_path=svd_path,
     )
+    sources = ["espressif-svd"]
+    enrichments: list = []
+
+    family_toml = overlay_root / "vendors" / "espressif" / family / "family.toml"
+    if family_toml.is_file():
+        try:
+            enrichments.append(overlay_extract(
+                vendor="espressif", family=family, device=device,
+                overlay_root=overlay_root,
+            ))
+            sources.append("espressif-overlay")
+        except Exception as e:
+            print(f"      ! overlay load failed for {device}: {e}")
+
+    if idf_root is not None and idf_root.is_dir():
+        try:
+            known = _known_peripherals_from_payload(primary)
+            idf_payload = idf_extract(
+                vendor="espressif", family=family, device=device,
+                idf_root=idf_root, known_peripherals=known,
+            )
+            # Only count as a source when something useful surfaced.
+            if idf_payload.get("hardware_caps") or idf_payload.get("peripherals"):
+                enrichments.append(idf_payload)
+                sources.append("espressif-idf")
+        except Exception as e:
+            print(f"      ! idf extract failed for {device}: {e}")
+
+    if enrichments:
+        result = merge_payloads(
+            primary=primary, enrichments=tuple(enrichments),
+            policy=ESPRESSIF_MERGE_POLICY,
+        )
+        payload = result.payload
+    else:
+        payload = primary
+
     out_path = write_device_yaml(
         payload=payload, output_root=output_root,
         vendor="espressif", family=family, device=device,
     )
-    return out_path, family, True
+    return out_path, family, True, sources
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,6 +159,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--svd-root", type=Path, required=True,
                         help="Root containing the Espressif SVDs "
                              "(usually <cache>/espressif-svd/svd)")
+    parser.add_argument("--overlay-root", type=Path, default=ROOT / "data",
+                        help="Overlay TOML root (default: <repo>/data)")
+    parser.add_argument("--idf-root", type=Path, default=None,
+                        help="ESP-IDF cache root (omit to skip the "
+                             "espressif-idf enrichment).")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing YAMLs (default: preserve "
@@ -128,17 +191,19 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     failures = 0
-    by_family: dict[str, list[tuple[Path, bool, bool, str]]] = defaultdict(list)
+    by_family: dict[str, list[tuple[Path, bool, bool, str, list[str]]]] = defaultdict(list)
     for svd in svds:
         try:
-            out_path, fam, written = _re_emit_one(
-                svd_path=svd, output_root=args.out, force=args.force,
+            out_path, fam, written, sources = _re_emit_one(
+                svd_path=svd, overlay_root=args.overlay_root,
+                idf_root=args.idf_root,
+                output_root=args.out, force=args.force,
             )
-            by_family[fam].append((out_path or svd, True, written, ""))
+            by_family[fam].append((out_path or svd, True, written, "", sources))
         except Exception as exc:  # noqa: BLE001
             failures += 1
             fam = _family_slug(_device_id(svd.stem))
-            by_family[fam].append((svd, False, False, f"{type(exc).__name__}: {exc}"))
+            by_family[fam].append((svd, False, False, f"{type(exc).__name__}: {exc}", []))
 
     grand_ok = grand_skipped = grand_fail = 0
     for fam in sorted(by_family):
@@ -157,8 +222,15 @@ def main(argv: list[str] | None = None) -> int:
             info.append(f"{skipped} preserved")
         if fail:
             info.append(f"{fail} failed")
-        print(f"  {marker} {fam:10s} {len(rows):>2} chip(s)  ({', '.join(info)})")
-        for path, success, _written, msg in rows:
+        # Aggregate sources used (compact label per family).
+        all_sources: set[str] = set()
+        for r in rows:
+            for s in r[4]:
+                if s not in {"preserved", "espressif-svd"}:
+                    all_sources.add(s.removeprefix("espressif-"))
+        src_label = "+".join(sorted(all_sources)) if all_sources else "svd-only"
+        print(f"  {marker} {fam:10s} {len(rows):>2} chip(s)  ({', '.join(info)}; sources: {src_label})")
+        for path, success, _written, msg, _sources in rows:
             if not success:
                 print(f"      ✗ {path.stem}: {msg[:80]}")
 

@@ -1,0 +1,143 @@
+# ESP32-P4 family overlay — dual-core RV32IMAFC HP + RV32IMAC LP
+# coprocessor.  Espressif's first chip with HiFi5 DSP, MIPI-CSI/DSI,
+# H.264 hardware encoder, USB 2.0 HS, gigabit Ethernet MAC.  No
+# native Wi-Fi/BT — designed to pair with an external Espressif
+# wireless companion (e.g. ESP32-C6 over SPI/SDIO).
+#
+# Sourced from ESP32-P4 TRM Preliminary rev 0.4, Datasheet v0.6.
+
+description = "Espressif ESP32-P4 dual-core RISC-V (RV32IMAFC) high-perf with HiFi5 DSP"
+package     = "qfn80"
+
+[adc]
+max_clock_hz = 10_000_000
+[uart]
+max_baud_hz = 10_000_000
+[spi]
+max_clock_hz = 80_000_000
+[i2c]
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+[[memories]]
+name = "ROM"
+base_address = 0x4FC00000
+size_bytes = 131072           # 128 KB internal ROM
+access = "rx"
+role = "boot-rom"
+
+[[memories]]
+name = "L2MEM"
+base_address = 0x4FF00000
+size_bytes = 786432           # 768 KB L2 cache RAM (shared HP CPUs)
+access = "rwx"
+
+[[memories]]
+name = "HP_SRAM"
+base_address = 0x4FF80000
+size_bytes = 32768            # 32 KB HP SRAM
+access = "rwx"
+
+[[memories]]
+name = "LP_SRAM"
+base_address = 0x50108000
+size_bytes = 8192             # 8 KB LP SRAM (LP coprocessor scratch)
+access = "rwx"
+role = "rtc-slow"
+
+[[memories]]
+name = "DROM"
+base_address = 0x40000000
+size_bytes = 33554432         # 32 MB external Flash mapped read
+access = "ro"
+role = "xip-flash-data"
+
+[[memories]]
+name = "IROM"
+base_address = 0x40000000
+size_bytes = 33554432
+access = "rx"
+role = "xip-flash-exec"
+
+[[memories]]
+name = "EXTRAM"
+base_address = 0x48000000
+size_bytes = 33554432         # up to 32 MB external HEX PSRAM
+access = "rwx"
+role = "external-psram"
+
+[system_clock.oscillators.xtal]
+freq_hz = 40_000_000
+kind = "crystal-external"
+[system_clock.oscillators.rc_fast]
+freq_hz = 17_500_000
+kind = "rc-internal"
+[system_clock.oscillators.rc_slow]
+freq_hz = 150_000
+kind = "rc-internal"
+[system_clock.oscillators.xtal32k]
+freq_hz = 32_768
+kind = "crystal-external"
+optional = true
+[system_clock.oscillators.pll_cpu]
+freq_hz = 400_000_000
+kind = "synthesised"
+[system_clock.oscillators.pll_periph]
+freq_hz = 480_000_000
+kind = "synthesised"
+
+[[system_clock.domains]]
+id = "sysclk"
+sources = ["xtal", "rc_fast", "pll_cpu", "pll_periph"]
+[[system_clock.domains]]
+id = "rtc_slow_clk"
+sources = ["rc_slow", "xtal32k"]
+
+[system_clock.post_reset_profile]
+name = "post-reset-rc-fast-17mhz"
+sysclk_hz = 17_500_000
+hclk_hz = 17_500_000
+pclk_hz = 17_500_000
+source = "rc_fast"
+
+[[system_clock.recommended_profiles]]
+name = "xtal-40mhz"
+sysclk_hz = 40_000_000
+hclk_hz = 40_000_000
+pclk_hz = 40_000_000
+source = "xtal"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-200mhz"
+sysclk_hz = 200_000_000
+hclk_hz = 200_000_000
+pclk_hz = 100_000_000
+source = "pll_cpu"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-400mhz-max"
+sysclk_hz = 400_000_000
+hclk_hz = 400_000_000
+pclk_hz = 100_000_000
+source = "pll_cpu"
+
+# No native wireless — meant to pair with companion radio.
+
+[[power_domains]]
+id = "active"
+[[power_domains]]
+id = "light-sleep"
+[[power_domains]]
+id = "deep-sleep"
+peripherals = ["lp_core", "lp_gpio", "lp_io"]
+
+strapping_pins = ["GPIO35", "GPIO36", "GPIO37"]

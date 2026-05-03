@@ -1,0 +1,161 @@
+# ESP32-S3 family overlay — Xtensa LX7 dual-core SoC with AI
+# vector instructions, USB OTG, and octal SPI/PSRAM.
+#
+# Sourced from: ESP32-S3 TRM rev 1.6, Datasheet v1.6, ESP-IDF v5.x.
+
+description = "Espressif ESP32-S3 dual-core Xtensa LX7 SoC with AI accel + USB OTG"
+package     = "qfn56"
+
+[adc]
+max_clock_hz = 2_000_000
+
+[uart]
+max_baud_hz = 5_000_000
+
+[spi]
+max_clock_hz = 80_000_000
+
+[i2c]
+max_clock_hz = 800_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+[[i2c.speed_options]]
+name = "fast_plus_800k"
+speed_hz = 800_000
+
+[[memories]]
+name = "ROM"
+base_address = 0x40000000
+size_bytes = 393216           # 384 KB internal ROM
+access = "rx"
+role = "boot-rom"
+
+[[memories]]
+name = "SRAM"
+base_address = 0x3FC88000
+size_bytes = 524288           # 512 KB unified internal SRAM (D/I)
+access = "rwx"
+
+[[memories]]
+name = "RTC_FAST_RAM"
+base_address = 0x600FE000
+size_bytes = 8192
+access = "rwx"
+role = "rtc-fast"
+
+[[memories]]
+name = "RTC_SLOW_RAM"
+base_address = 0x50000000
+size_bytes = 8192
+access = "rwx"
+role = "rtc-slow"
+
+[[memories]]
+name = "DROM"
+base_address = 0x3C000000
+size_bytes = 33554432         # up to 32 MB external Flash mapped read
+access = "ro"
+role = "xip-flash-data"
+
+[[memories]]
+name = "IROM"
+base_address = 0x42000000
+size_bytes = 33554432         # up to 32 MB external Flash mapped exec
+access = "rx"
+role = "xip-flash-exec"
+
+[[memories]]
+name = "EXTRAM"
+base_address = 0x3D000000
+size_bytes = 33554432         # up to 32 MB external octal PSRAM
+access = "rwx"
+role = "external-psram"
+
+[system_clock.oscillators.xtal]
+freq_hz = 40_000_000
+kind = "crystal-external"
+
+[system_clock.oscillators.rc_fast]
+freq_hz = 17_500_000
+kind = "rc-internal"
+
+[system_clock.oscillators.rc_slow]
+freq_hz = 136_000             # ~136 kHz on S3
+kind = "rc-internal"
+
+[system_clock.oscillators.xtal32k]
+freq_hz = 32_768
+kind = "crystal-external"
+optional = true
+
+[system_clock.oscillators.pll_cpu]
+freq_hz = 480_000_000
+kind = "synthesised"
+
+[[system_clock.domains]]
+id = "sysclk"
+sources = ["xtal", "rc_fast", "pll_cpu"]
+
+[[system_clock.domains]]
+id = "rtc_slow_clk"
+sources = ["rc_slow", "xtal32k"]
+
+[system_clock.post_reset_profile]
+name = "post-reset-rc-fast-17mhz"
+sysclk_hz = 17_500_000
+hclk_hz = 17_500_000
+pclk_hz = 17_500_000
+source = "rc_fast"
+
+[[system_clock.recommended_profiles]]
+name = "xtal-40mhz"
+sysclk_hz = 40_000_000
+hclk_hz = 40_000_000
+pclk_hz = 40_000_000
+source = "xtal"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-80mhz"
+sysclk_hz = 80_000_000
+hclk_hz = 80_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-160mhz"
+sysclk_hz = 160_000_000
+hclk_hz = 160_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-240mhz-max"
+sysclk_hz = 240_000_000
+hclk_hz = 240_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+[wireless.wifi]
+standards = ["b", "g", "n"]
+band_ghz = [2.4]
+
+[wireless.bluetooth]
+version = "5.0"
+profiles = ["le"]
+
+[[power_domains]]
+id = "active"
+[[power_domains]]
+id = "modem-sleep"
+[[power_domains]]
+id = "light-sleep"
+[[power_domains]]
+id = "deep-sleep"
+peripherals = ["rtc_gpio", "rtc_io", "rtc_cntl", "ulp"]
+
+strapping_pins = ["GPIO0", "GPIO3", "GPIO45", "GPIO46"]

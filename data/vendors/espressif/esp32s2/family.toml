@@ -1,0 +1,192 @@
+# ESP32-S2 family overlay — Xtensa LX7 single-core SoC with USB OTG.
+#
+# Sourced from:
+#   * ESP32-S2 TRM rev 1.5
+#   * ESP32-S2 Datasheet v1.7
+#   * ESP-IDF v5.x soc/esp32s2 component
+
+description = "Espressif ESP32-S2 single-core Xtensa LX7 SoC with USB 2.0 OTG"
+package     = "qfn56"
+
+[adc]
+max_clock_hz = 5_000_000      # SAR ADC max sample rate ~2 MSPS
+
+[uart]
+max_baud_hz = 5_000_000
+
+[spi]
+max_clock_hz = 80_000_000     # GPSPI master clock max via IO_MUX direct route
+
+[i2c]
+max_clock_hz = 800_000        # ESP32-S2 I²C peaks at 800 kHz
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus_800k"
+speed_hz = 800_000
+
+# ---------------------------------------------------------------------------
+# Memory regions
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "ROM"
+base_address = 0x40000000
+size_bytes = 131072           # 128 KB internal mask ROM
+access = "rx"
+role = "boot-rom"
+
+[[memories]]
+name = "IRAM"
+base_address = 0x40020000
+size_bytes = 196608           # 192 KB instruction RAM (overlap with DRAM bank 0)
+access = "rwx"
+
+[[memories]]
+name = "DRAM"
+base_address = 0x3FFB0000
+size_bytes = 327680           # 320 KB total internal SRAM (DRAM0 + DRAM1)
+access = "rw"
+
+[[memories]]
+name = "RTC_FAST_RAM"
+base_address = 0x40070000
+size_bytes = 8192
+access = "rwx"
+role = "rtc-fast"
+
+[[memories]]
+name = "RTC_SLOW_RAM"
+base_address = 0x50000000
+size_bytes = 8192
+access = "rwx"
+role = "rtc-slow"
+
+[[memories]]
+name = "DROM"
+base_address = 0x3F000000
+size_bytes = 8388608          # up to 8 MB external Flash mapped read
+access = "ro"
+role = "xip-flash-data"
+
+[[memories]]
+name = "IROM"
+base_address = 0x40080000
+size_bytes = 4194304          # 4 MB external Flash mapped exec
+access = "rx"
+role = "xip-flash-exec"
+
+[[memories]]
+name = "EXTRAM"
+base_address = 0x3F500000
+size_bytes = 11534336         # up to ~11 MB external PSRAM
+access = "rwx"
+role = "external-psram"
+
+# ---------------------------------------------------------------------------
+# System clock
+# ---------------------------------------------------------------------------
+
+[system_clock.oscillators.xtal]
+freq_hz = 40_000_000
+kind = "crystal-external"
+
+[system_clock.oscillators.rc_fast]
+freq_hz = 17_500_000
+kind = "rc-internal"
+
+[system_clock.oscillators.rc_slow]
+freq_hz = 90_000              # ~90 kHz internal RC slow on S2
+kind = "rc-internal"
+
+[system_clock.oscillators.xtal32k]
+freq_hz = 32_768
+kind = "crystal-external"
+optional = true
+
+[system_clock.oscillators.pll_cpu]
+freq_hz = 480_000_000
+kind = "synthesised"
+
+[[system_clock.domains]]
+id = "sysclk"
+sources = ["xtal", "rc_fast", "pll_cpu"]
+
+[[system_clock.domains]]
+id = "rtc_slow_clk"
+sources = ["rc_slow", "xtal32k"]
+
+[system_clock.post_reset_profile]
+name = "post-reset-rc-fast-17mhz"
+sysclk_hz = 17_500_000
+hclk_hz = 17_500_000
+pclk_hz = 17_500_000
+source = "rc_fast"
+
+[[system_clock.recommended_profiles]]
+name = "xtal-40mhz"
+sysclk_hz = 40_000_000
+hclk_hz = 40_000_000
+pclk_hz = 40_000_000
+source = "xtal"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-80mhz"
+sysclk_hz = 80_000_000
+hclk_hz = 80_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-160mhz"
+sysclk_hz = 160_000_000
+hclk_hz = 160_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-240mhz-max"
+sysclk_hz = 240_000_000
+hclk_hz = 240_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+# ---------------------------------------------------------------------------
+# Frente C
+# ---------------------------------------------------------------------------
+
+[wireless.wifi]
+standards = ["b", "g", "n"]
+band_ghz = [2.4]
+
+# No Bluetooth on S2.
+
+[[power_domains]]
+id = "active"
+sleep_modes = ["active"]
+
+[[power_domains]]
+id = "modem-sleep"
+description = "CPU on, Wi-Fi off"
+
+[[power_domains]]
+id = "light-sleep"
+description = "CPU + RAM retained, peripherals + Wi-Fi off"
+
+[[power_domains]]
+id = "deep-sleep"
+description = "RTC + ULP only (RISC-V or FSM)"
+peripherals = ["rtc_gpio", "rtc_io", "rtc_cntl", "ulp"]
+
+strapping_pins = [
+    "GPIO0",     # boot mode
+    "GPIO45",    # VDD_SDIO voltage select
+    "GPIO46",    # boot mode
+]

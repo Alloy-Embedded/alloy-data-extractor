@@ -1,0 +1,134 @@
+# ESP32-H2 family overlay — RV32IMAC single-core SoC, BLE 5.3 +
+# 802.15.4 (Thread/Zigbee/Matter).  No Wi-Fi.
+#
+# Sourced from ESP32-H2 TRM rev 1.0, Datasheet v1.2.
+
+description = "Espressif ESP32-H2 single-core RISC-V BLE 5.3 + 802.15.4 (Thread/Zigbee)"
+package     = "qfn32"
+
+[adc]
+max_clock_hz = 5_000_000
+[uart]
+max_baud_hz = 5_000_000
+[spi]
+max_clock_hz = 60_000_000
+[i2c]
+max_clock_hz = 800_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+[[i2c.speed_options]]
+name = "fast_plus_800k"
+speed_hz = 800_000
+
+[[memories]]
+name = "ROM"
+base_address = 0x40000000
+size_bytes = 131072           # 128 KB ROM
+access = "rx"
+role = "boot-rom"
+
+[[memories]]
+name = "SRAM"
+base_address = 0x40800000
+size_bytes = 327680           # 320 KB SRAM
+access = "rwx"
+
+[[memories]]
+name = "LP_SRAM"
+base_address = 0x50000000
+size_bytes = 4096             # 4 KB LP SRAM
+access = "rwx"
+role = "rtc-slow"
+
+[[memories]]
+name = "DROM"
+base_address = 0x42000000
+size_bytes = 4194304          # 4 MB external Flash mapped read
+access = "ro"
+role = "xip-flash-data"
+
+[[memories]]
+name = "IROM"
+base_address = 0x42000000
+size_bytes = 4194304
+access = "rx"
+role = "xip-flash-exec"
+
+[system_clock.oscillators.xtal]
+freq_hz = 32_000_000          # ESP32-H2 uses 32 MHz crystal (NOT 40)
+kind = "crystal-external"
+[system_clock.oscillators.rc_fast]
+freq_hz = 8_000_000           # 8 MHz internal RC fast on H2
+kind = "rc-internal"
+[system_clock.oscillators.rc_slow]
+freq_hz = 150_000
+kind = "rc-internal"
+[system_clock.oscillators.pll_cpu]
+freq_hz = 96_000_000          # H2 PLL at 96 MHz max
+kind = "synthesised"
+
+[[system_clock.domains]]
+id = "sysclk"
+sources = ["xtal", "rc_fast", "pll_cpu"]
+[[system_clock.domains]]
+id = "rtc_slow_clk"
+sources = ["rc_slow"]
+
+[system_clock.post_reset_profile]
+name = "post-reset-rc-fast-8mhz"
+sysclk_hz = 8_000_000
+hclk_hz = 8_000_000
+pclk_hz = 8_000_000
+source = "rc_fast"
+
+[[system_clock.recommended_profiles]]
+name = "xtal-32mhz"
+sysclk_hz = 32_000_000
+hclk_hz = 32_000_000
+pclk_hz = 32_000_000
+source = "xtal"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-48mhz"
+sysclk_hz = 48_000_000
+hclk_hz = 48_000_000
+pclk_hz = 48_000_000
+source = "pll_cpu"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-96mhz-max"
+sysclk_hz = 96_000_000
+hclk_hz = 96_000_000
+pclk_hz = 48_000_000
+source = "pll_cpu"
+
+# H2 has NO Wi-Fi.
+
+[wireless.bluetooth]
+version = "5.3"
+profiles = ["le"]
+
+[wireless.thread]
+version = "1.3"
+
+[wireless.zigbee]
+version = "3.0"
+
+[wireless]
+ieee_802_15_4 = true
+
+[[power_domains]]
+id = "active"
+[[power_domains]]
+id = "modem-sleep"
+[[power_domains]]
+id = "light-sleep"
+[[power_domains]]
+id = "deep-sleep"
+
+strapping_pins = ["GPIO8", "GPIO9", "GPIO25"]

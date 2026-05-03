@@ -1,0 +1,208 @@
+# ESP32 (classic) family overlay — Xtensa LX6 dual-core SoC.
+#
+# Sourced from:
+#   * ESP32 Technical Reference Manual (TRM, rev 5.3)
+#   * ESP32 Datasheet v3.10 (Espressif PN-PRESS-2016-007-EN)
+#   * ESP-IDF v5.x soc/esp32 component
+#
+# Memory layout follows the ECO V3 silicon revision tap-out.
+# All bus addresses are bus-master (CPU side) views.
+
+description = "Espressif ESP32 (classic) dual-core Xtensa LX6 SoC, ECO V3 silicon"
+package     = "qfn48"
+
+# ---------------------------------------------------------------------------
+# Peripheral max clocks
+# ---------------------------------------------------------------------------
+
+[adc]
+# TRM §29.4 — ADC max conversion rate ~2 MSPS at 16 MHz APB clock.
+max_clock_hz = 16_000_000
+
+[uart]
+# TRM §13.2 — UART max baud at 80 MHz APB / 5 = 16 Mbaud (theoretical;
+# practical ceiling is ~5 Mbaud due to FIFO + DMA).
+max_baud_hz = 5_000_000
+
+[spi]
+# TRM §7 — SPI master max = APB / 2 = 40 MHz.
+max_clock_hz = 40_000_000
+
+[i2c]
+# TRM §11 — I²C Fast-Mode-Plus = 1 MHz; HS-mode unsupported.
+max_clock_hz = 1_000_000
+
+[[i2c.speed_options]]
+name = "standard"
+speed_hz = 100_000
+
+[[i2c.speed_options]]
+name = "fast"
+speed_hz = 400_000
+
+[[i2c.speed_options]]
+name = "fast_plus"
+speed_hz = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Memory regions (bus-master view, ECO V3)
+# ---------------------------------------------------------------------------
+
+[[memories]]
+name = "ROM"
+base_address = 0x40000000
+size_bytes = 393216           # 384 KB internal mask ROM (boot loader)
+access = "rx"
+role = "boot-rom"
+
+[[memories]]
+name = "IRAM"
+base_address = 0x40080000
+size_bytes = 131072           # 128 KB instruction RAM
+access = "rwx"
+
+[[memories]]
+name = "DRAM"
+base_address = 0x3FFAA000
+size_bytes = 327680           # 320 KB data RAM (DRAM0 + DRAM1 + DRAM2)
+access = "rw"
+
+[[memories]]
+name = "RTC_FAST_RAM"
+base_address = 0x40070000     # CPU-side; RTC core sees 0x3FF80000
+size_bytes = 8192             # 8 KB RTC fast (deep-sleep retention)
+access = "rwx"
+role = "rtc-fast"
+
+[[memories]]
+name = "RTC_SLOW_RAM"
+base_address = 0x50000000
+size_bytes = 8192             # 8 KB RTC slow (ULP coprocessor)
+access = "rwx"
+role = "rtc-slow"
+
+[[memories]]
+name = "DROM"
+base_address = 0x3F400000
+size_bytes = 4194304          # 4 MB external Flash mapped read-only
+access = "ro"
+role = "xip-flash-data"
+
+[[memories]]
+name = "IROM"
+base_address = 0x400D0000
+size_bytes = 11534336         # ~11 MB external Flash mapped exec
+access = "rx"
+role = "xip-flash-exec"
+
+# ---------------------------------------------------------------------------
+# System clock
+# ---------------------------------------------------------------------------
+
+[system_clock.oscillators.xtal]
+freq_hz = 40_000_000
+kind = "crystal-external"
+
+[system_clock.oscillators.rc_fast]
+freq_hz = 8_500_000           # ~8.5 MHz ±5% internal RC
+kind = "rc-internal"
+
+[system_clock.oscillators.rc_slow]
+freq_hz = 150_000             # 150 kHz internal RC for RTC + ULP
+kind = "rc-internal"
+
+[system_clock.oscillators.xtal32k]
+freq_hz = 32_768
+kind = "crystal-external"
+optional = true
+
+[system_clock.oscillators.pll_cpu]
+freq_hz = 480_000_000         # 480 MHz PLL_CPU; tapped at /2 /3 /6 for sysclk
+kind = "synthesised"
+
+[[system_clock.domains]]
+id = "sysclk"
+sources = ["xtal", "rc_fast", "pll_cpu"]
+
+[[system_clock.domains]]
+id = "rtc_slow_clk"
+sources = ["rc_slow", "xtal32k"]
+
+[system_clock.post_reset_profile]
+name = "post-reset-rc-fast-8mhz"
+sysclk_hz = 8_500_000
+hclk_hz = 8_500_000
+pclk_hz = 8_500_000
+source = "rc_fast"
+
+[[system_clock.recommended_profiles]]
+name = "xtal-40mhz"
+sysclk_hz = 40_000_000
+hclk_hz = 40_000_000
+pclk_hz = 40_000_000
+source = "xtal"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-80mhz"
+sysclk_hz = 80_000_000
+hclk_hz = 80_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-160mhz"
+sysclk_hz = 160_000_000
+hclk_hz = 160_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+[[system_clock.recommended_profiles]]
+name = "pll-cpu-240mhz-max"
+sysclk_hz = 240_000_000
+hclk_hz = 240_000_000
+pclk_hz = 80_000_000
+source = "pll_cpu"
+
+# ---------------------------------------------------------------------------
+# Frente C — wireless + power_domains + strapping_pins
+# ---------------------------------------------------------------------------
+
+[wireless.wifi]
+standards = ["b", "g", "n"]
+band_ghz = [2.4]
+phy = "single-antenna"
+
+[wireless.bluetooth]
+version = "4.2"
+profiles = ["classic", "le"]
+
+[[power_domains]]
+id = "active"
+description = "Full operation; both CPUs, Wi-Fi/BT, peripherals"
+sleep_modes = ["active"]
+
+[[power_domains]]
+id = "modem-sleep"
+description = "CPU on, Wi-Fi/BT MAC + baseband off"
+sleep_modes = ["modem-sleep"]
+
+[[power_domains]]
+id = "light-sleep"
+description = "CPU + RAM retained, peripherals + radios off"
+sleep_modes = ["light-sleep"]
+
+[[power_domains]]
+id = "deep-sleep"
+description = "RTC + ULP only; main CPU + RAM powered down"
+peripherals = ["rtc_gpio", "rtc_io", "rtc_cntl", "ulp"]
+sleep_modes = ["deep-sleep", "hibernation"]
+
+# ESP32 strapping pins (TRM §3.1.5).  These GPIOs are sampled at
+# reset to determine boot mode + flash voltage + JTAG enable.
+strapping_pins = [
+    "MTDI",     # GPIO12 — VDD_SDIO voltage select (1.8V vs 3.3V)
+    "GPIO0",    # boot mode select (download vs flash boot)
+    "GPIO2",    # boot mode (must be low/floating for download)
+    "MTDO",     # GPIO15 — debug log on boot
+    "GPIO5",    # SDIO slave timing
+]
